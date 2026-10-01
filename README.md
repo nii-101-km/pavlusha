@@ -1,4 +1,4 @@
-# P.A.V.L.U.S.H.A. ☝😐
+# P.A.V.L.U.S.H.A. ☝️😐
 
 <p align="center">
   <img src="assets/pavlusha.png" alt="P.A.V.L.U.S.H.A. mascot holding a jar of jam" width="280">
