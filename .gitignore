@@ -1,0 +1,33 @@
+# Python environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Credentials and private local configuration (example.env is public)
+.env
+.env.*
+!.env.example
+
+# Default Worker/controller data and local benchmark executions
+/agent-work/
+*.pavlusha-state/
+/bench-runs/
+
+# Project smoke/probe outputs and captured provider logs
+/*-results/
+/docs/cache-probe-*/
+/docs/cache-dogfood-*/
+/batch-window-*-live.txt
+*.log
+experiment.jsonl
+history_archive.jsonl
+context_archive.jsonl
+
+# Temporary verification, editor and OS debris
+/.release-checks/
+*.tmp
+*.swp
+*~
+.DS_Store

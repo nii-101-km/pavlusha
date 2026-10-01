@@ -1,0 +1,28 @@
+Memory is fine (36Gi available). Model files are present. 12 CPUs.
+
+OK, let me think about the approach. The GUI session got killed. I need a more robust setup.
+
+Key insight: the GUI session has a limited lifetime. I need to do the OCR test within that lifetime.
+
+Let me reconsider. The cleanest approach:
+1. Start the server in a separate shell (persistent). Preload the model.
+2. Start the browser in the GUI sandbox with network=true.
+
+But this requires network=true to work (controller's --network).
+
+Alternatively:
+1. Start the server + browser in the same gui_start with a large timeout.
+
+Let me first test whether a background process started in a shell command persists across shell commands. This will determine whether I can run the server in a separate shell.
+
+Let me test: start a simple background process in a shell command, then check in another shell command whether it's still alive.
+
+Actually, let me test with the actual server. Start it in the background in a shell command (with --no-load for speed), then check in another shell command whether it's still alive and reachable.
+
+Wait, but if I start it with --no-load, the model won't be loaded. Let me start it without --no-load so the model gets loaded. But that takes 1–2 minutes. The shell command's timeout is 120 seconds by default. If I start it in the background (nohup) and return immediately, the shell command returns right away, and the server keeps loading in the background.
+
+But the question is: does the background process persist after the shell command's sandbox is torn down?
+
+Let me test this directly. Start the server in the background, return, then check.
+
+Let me do it.
