@@ -157,6 +157,21 @@ advice contributes to later Worker prompts as ordinary tool output.
 
 ## Recovery and context
 
+Ordinary shell actions may also opt into `"gpu":true` for NVIDIA compute device access
+inside the existing sandbox. This option is independent of `release_worker`; either can
+be used alone or together. Omission/false leaves the sandbox unchanged. See
+[GPU shell access](docs/gpu-shell.md) for the exact device boundary and timeout ceiling.
+
+Shell actions can opt into `"release_worker": true`, for example
+`{"action":"shell","command":"python workload.py","timeout":120,"release_worker":true}`.
+The Worker chooses `timeout` before release; Core clamps it to `--command-timeout`.
+Core commits the current materialized Project State using the existing atomic checkpoint
+transaction, releases the backend, runs the ordinary bounded shell command, and restores
+the backend in `finally`. It then cold-recovers from that checkpoint and current files,
+with the normal shell result and no previous History or inference/KV state. Materialize
+durable changes with `project_update` before selecting this mode. Omitted/false release
+keeps existing shell behavior. See [Worker release](docs/worker-release.md) for backend limits.
+
 Periodic review acknowledges or updates working State without refreshing frozen
 snapshots or clearing History. Successful HIGH commits reviewed State and a bounded
 handoff, refreshes Map/State snapshots, archives all prior History and starts empty.
@@ -213,12 +228,17 @@ back to literal prose; install requirements for full Markdown presentation.
 
 ## Tests
 
+Worker final actions use native JSON Schema constrained generation while Core
+retains validation and permission checks. See [Worker action contract](docs/worker-action-contract.md)
+for the existing action families, phase selection, truncation handling and local verification.
+
 ```bash
 python -m unittest discover -s tests
 python -m compileall -q agent.py bench.py pavlusha_agent tests tools
 ```
 
-Install `requirements.txt` first. Ordinary provider tests use scripted replies,
+Install `requirements-test.txt` first (controller dependencies plus the independent
+JSON Schema validator used by contract tests). Ordinary provider tests use scripted replies,
 without paid API calls. Browser/network integration tests are opt-in through
 `PAVLUSHA_TEST_GUI_BROWSER=1` / `PAVLUSHA_LIVE_NETWORK=1`; real Xvfb capture runs
 when available. OCR smoke tools require a separately supplied OCR application;

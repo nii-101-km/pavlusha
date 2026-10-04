@@ -93,9 +93,12 @@ new worth preserving. Either response acknowledges the questionnaire and normal 
 
 History capacity is separate. At `--history-high` or the pre-request `--history-context-high` threshold, Core requires the same real history checkpoint. Normal shell/finish
 actions are blocked while it is required. The Worker may materialize durable changes with `project_update`, then
-calls `project_review_complete`. Only an accepted required history checkpoint refreshes/freezes Project Map and
+calls `project_review_complete`. An accepted required history checkpoint refreshes/freezes Project Map and
 Project State, emits `PREFIX CHANGED · checkpoint snapshot refresh` in Live, archives the old chronological
 Recent History, and resets the delta. `project_review_complete` is rejected when no history checkpoint is required.
+Opt-in `shell.release_worker=true` also commits a fresh generation through the same atomic review
+transaction and performs cold recovery after bounded shell execution and backend restoration.
+It retains the normal shell result, discards previous History, and preserves current `/work`.
 
 Between history checkpoints the prompt is SYSTEM → TASK → frozen MAP → frozen STATE → optional latest HANDOFF → chronological
 RECENT HISTORY. A periodic questionnaire is appended as a temporary suffix instruction so it does not rewrite
@@ -134,9 +137,10 @@ audit archives are unchanged. The handoff may be stale; current files, State and
 
 ### Atomic generation and cold restart
 
-`project_init` atomically commits the initial recovery generation. Only successful true HIGH
-`project_review_complete` replaces it with the next reviewed Project State, matching handoff and
-metadata. Accepted ordinary/periodic updates remain the live working document until the next HIGH;
+`project_init` atomically commits the initial recovery generation. Successful true HIGH
+`project_review_complete` or intentional Worker release replaces it with the next materialized
+Project State, matching handoff and metadata. Release clears the old handoff. Accepted
+ordinary/periodic updates remain the live working document until the next checkpoint boundary;
 they do not replace the cold-restart recovery point. The 2048-byte bound and evidence authority are
 unchanged. No semantic evidence checks are added.
 

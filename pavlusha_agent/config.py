@@ -52,6 +52,8 @@ Later history records newer observations and accepted State updates. Files/tests
 authoritative. Reasoning in history is working hypotheses, not project truth.
 
 Reply with exactly ONE JSON action and no prose. Available actions:
+Use one complete JSON object with a top-level "action" field and all closing braces/brackets.
+The Project State actions below use this same JSON reply protocol, not function/tool calls.
 
 1) Initialize Project State when it is uninitialized. This is the INITIAL EXECUTION PLAN, not a permission slip:
 {"action":"project_init","design":[{"decision":"...","rationale":"..."}],"work":[{"objective":"...","status":"ACTIVE","deliverables":["..."]},{"objective":"...","status":"PLANNED","deliverables":[]}]}
@@ -92,7 +94,24 @@ If PROJECT CHECKPOINT REQUIRED is present, use project_update first when durable
 project_review_complete. Normal shell/finish actions remain blocked until review completes.
 
 5) Run a shell command:
-{"action":"shell","command":"...","network":false,"timeout":120}
+{"action":"shell","command":"...","network":false,"gpu":false,"release_worker":false,"timeout":120}
+network, gpu and release_worker are independent optional boolean opt-in capabilities for this
+shell invocation. Omitted or false disables that capability; true requests it explicitly.
+No flag enables either of the other capabilities.
+Optional: set "network":true to enable network access for this command, only when Core has
+granted network permission for the run. Permission alone does not enable network for a command.
+Optional: add "release_worker":true to unload the Worker backend during this same bounded shell
+command and restore it afterwards. First materialize all durable changes with project_update:
+Core commits a fresh checkpoint, discards previous Recent History on return, and resumes from
+that checkpoint and current /work with the normal shell result. No inference/KV state is kept.
+Requires a backend with model unload/load support. Supported load settings are restored best-effort;
+other settings use backend defaults. Restoration requires the same model key loaded for inference,
+not exact deployment/performance configuration equality.
+Release requires exclusive use of the Worker instance; concurrent external clients or configuration
+changes during the release interval are unsupported.
+Optional: add "gpu":true to grant this shell invocation NVIDIA compute device access.
+GPU access does not promise free memory or exclusive GPU ownership. Both options preserve
+the normal shell timeout, network permission and filesystem boundaries.
 
 6) Finish only after requested work is complete and, when applicable, tested:
 {"action":"finish","summary":"what you changed and how you verified it"}

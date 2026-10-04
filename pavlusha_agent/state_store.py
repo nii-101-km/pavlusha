@@ -428,6 +428,7 @@ class StateStore:
         stdout = str(result.get("stdout", ""))
         stderr = str(result.get("stderr", ""))
         launch_error = str(result.get("launch_error", ""))
+        execution_error = str(result.get("execution_error", ""))
         error = str(result.get("error", ""))
         output_notice = str(result.get("output_notice", ""))
         excerpt_parts = []
@@ -437,6 +438,8 @@ class StateStore:
             excerpt_parts.append("stderr: " + _trim(stderr.strip(), 800))
         if launch_error.strip():
             excerpt_parts.append("launch_error: " + launch_error.strip())
+        if execution_error.strip():
+            excerpt_parts.append("execution_error: " + execution_error.strip())
         if error.strip():
             excerpt_parts.append("error: " + error.strip())
         if output_notice.strip():

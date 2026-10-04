@@ -12,7 +12,7 @@ from contextlib import redirect_stdout, redirect_stderr
 from unittest.mock import patch
 
 from pavlusha_agent.cli import build_parser, main
-from pavlusha_agent.core import AgentError, ShellResult
+from pavlusha_agent.core import AgentError, ProviderTurn, ShellResult
 from pavlusha_agent.project_state import validate_project_action, HANDOFF_MAX_BYTES
 from pavlusha_agent.runtime import run_agent, PromptBudget
 from pavlusha_agent.state_store import StateStore
@@ -65,6 +65,50 @@ def run_script(root, replies, *, extra=(), shell_hook=None, eof=None, task='task
 
 
 class LifecycleTests(unittest.TestCase):
+    def test_periodic_project_update_recovers_malformed_envelope(self):
+        update = {'action': 'project_update', 'changes': [
+            {'op': 'add_design', 'decision': 'Use the existing implementation', 'rationale': 'Inspected files'}
+        ]}
+        malformed = ProviderTurn(content=json.dumps(update)[:-1], reasoning_content='', finish_reason='stop')
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            seen, result, error = run_script(root, [
+                init_turn(), turn({'action': 'shell', 'command': 'inspect'}),
+                malformed, malformed, turn(update), done('inspect'),
+                turn({'action': 'finish', 'summary': 'done'}),
+            ], extra=['--project-review-every', '1'])
+            self.assertEqual(result, 0, error)
+            self.assertIn('{"action":"project_update","changes":[...]}', seen[2][0]['content'])
+            for request in seen[2:5]:
+                self.assertTrue(any(m['content'].startswith('PERIODIC PROJECT STATE REVIEW') for m in request))
+            for request in seen[3:5]:
+                feedback = [m['content'] for m in request if m['content'].startswith('INVALID ACTION:')]
+                self.assertTrue(feedback)
+                self.assertTrue(all('malformed JSON action' in message for message in feedback))
+                self.assertNotIn("expected 'shell' or 'finish'", str(feedback))
+            state = StateStore(root/'state', 'task').load()
+            self.assertEqual(len(state['project_state']['design']), 1)
+            self.assertEqual(state['project_state']['last_review_operation'], 1)
+            logs = [json.loads(line) for line in (root/'state/state.log').read_text().splitlines()]
+            self.assertEqual(sum(x['kind'] == 'periodic_review_acknowledged' for x in logs), 1)
+            self.assertFalse((root/'state/history_archive.jsonl').exists())
+
+    def test_three_malformed_project_updates_keep_invalid_action_limit(self):
+        malformed = ProviderTurn(content='{"action":"project_update","changes":[{"op":"add_design","decision":"x","rationale":"y"}]',
+                                 reasoning_content='', finish_reason='stop')
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            seen, result, error = run_script(root, [
+                init_turn(), turn({'action': 'shell', 'command': 'inspect'}),
+                malformed, malformed, malformed,
+            ], extra=['--project-review-every', '1'])
+            self.assertIsNone(result)
+            self.assertEqual(error, 'model returned invalid actions three times in a row')
+            state = StateStore(root/'state', 'task').load()
+            self.assertEqual(state['project_state']['design'], [])
+            self.assertEqual(state['project_state']['last_review_operation'], 0)
+            self.assertEqual(state['counters']['operation'], 1)
+
     def test_count_context_first_and_simultaneous_use_one_checkpoint(self):
         for count, reasoning, expected in [(3, 'SMALL_OLD_REASONING', 'recent history'),
                                            (99, 'x'*27000, 'provider-reported prompt usage'),

@@ -145,7 +145,7 @@ class RuntimeProjectMapTests(unittest.TestCase):
         seen_messages = []
         pending = iter(actions)
 
-        def completion(self, messages, on_delta=None):
+        def completion(self, messages, on_delta=None, **kwargs):
             seen_messages.append(messages)
             return ProviderTurn(content=json.dumps(next(pending)), reasoning_content="",
                                 finish_reason="stop", prompt_tokens=100, completion_tokens=10)

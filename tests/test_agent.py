@@ -62,6 +62,14 @@ class ParseTests(unittest.TestCase):
         got = agent._extract_json_object('thinking... {"action":"shell","command":"ls"} trailing')
         self.assertEqual(got["command"], "ls")
 
+    def test_malformed_outer_action_never_extracts_nested_objects(self):
+        for nested in ({"op": "add_design", "decision": "observed", "rationale": "evidence"},
+                       {"action": "shell", "command": "must not execute"}):
+            malformed = json.dumps({"action": "project_update", "changes": [nested]})[:-1]
+            for raw in (malformed, 'thinking... ' + malformed, '```json\n' + malformed + '\n```'):
+                with self.subTest(raw=raw), self.assertRaisesRegex(agent.AgentError, 'malformed JSON action'):
+                    agent._extract_json_object(raw)
+
     def test_timeout_is_clamped(self):
         kind, data = agent.validate_action(
             {"action": "shell", "command": "sleep 10", "timeout": 9999}, 30

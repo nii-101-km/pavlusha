@@ -6,6 +6,8 @@ import sys
 import time
 from typing import Any, TextIO
 
+from . import __version__
+
 
 class LiveConsoleRenderer:
     """Append-only renderer. It never owns or changes runtime state."""
@@ -81,6 +83,7 @@ class LiveConsoleRenderer:
 
             fields = Text()
             for label, value in (
+                ("version", __version__),
                 ("model", model),
                 ("context", context_text),
                 ("expert", expert_status),
@@ -111,7 +114,7 @@ class LiveConsoleRenderer:
             self._line(title)
             self._line(description)
             self._line(
-                f"model {model} · context {context_text} · expert {expert_status}"
+                f"version {__version__} · model {model} · context {context_text} · expert {expert_status}"
             )
 
         self._line(self._paint("metadata", f"PAVLUSHA LIVE · max steps {max_steps}"))

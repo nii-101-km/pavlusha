@@ -293,8 +293,9 @@ class RuntimeRecoveryTests(unittest.TestCase):
 
     def test_high_context_high_and_periodic_reviews_keep_their_own_lifecycle(self):
         for extra,reasoning,action,refreshes in [
-            (['--history-high','1'],'normal',{'action':'project_review_complete','handoff':'NEW_HANDOFF'},3),
-            (['--history-context-high','0.2'],'x'*14000,{'action':'project_review_complete','handoff':'NEW_HANDOFF'},3),
+            # Map refreshes at startup and accepted completion, never HIGH entry.
+            (['--history-high','1'],'normal',{'action':'project_review_complete','handoff':'NEW_HANDOFF'},2),
+            (['--history-context-high','0.2'],'x'*14000,{'action':'project_review_complete','handoff':'NEW_HANDOFF'},2),
             (['--project-review-every','1'],'normal',{'action':'project_review_skip'},1)]:
             with self.subTest(extra=extra),tempfile.TemporaryDirectory() as tmp:
                 root=Path(tmp)

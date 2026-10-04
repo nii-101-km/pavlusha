@@ -27,11 +27,25 @@ def _existing_system_paths() -> list[str]:
     return [path for path in candidates if os.path.exists(path)]
 
 
+def _nvidia_compute_devices() -> list[Path]:
+    """Only compute nodes, freshly discovered; never mount the host /dev directory."""
+    gpus = sorted(path for path in Path("/dev").glob("nvidia[0-9]*")
+                  if path.name[6:].isascii() and path.name[6:].isdigit())
+    if not gpus:
+        raise OSError("GPU access requested but no numbered NVIDIA device nodes are present")
+    devices = [Path("/dev/nvidiactl"), Path("/dev/nvidia-uvm"), *gpus]
+    for path in devices:
+        if path.is_symlink() or not path.is_char_device():
+            raise OSError(f"GPU access requires a host NVIDIA character device: {path}")
+    return devices
+
+
 def build_bwrap_command(
     workdir: Path,
     shell_command: str,
     *,
     network: bool,
+    gpu: bool = False,
 ) -> list[str]:
     args = [
         "bwrap",
@@ -60,6 +74,11 @@ def build_bwrap_command(
     args += [
         "--proc", "/proc",
         "--dev", "/dev",
+    ]
+    if gpu:
+        for path in _nvidia_compute_devices():
+            args += ["--dev-bind", str(path), str(path)]
+    args += [
         "--tmpfs", "/tmp",
         "--bind", str(workdir), "/work",
         "--chdir", "/work",
@@ -85,8 +104,10 @@ def run_shell(
     network: bool,
     timeout: int,
     output_limit: int,
+    gpu: bool = False,
 ) -> ShellResult:
-    argv = build_bwrap_command(workdir, command, network=network)
+    argv = build_bwrap_command(workdir, command, network=network,
+                               **({"gpu": True} if gpu else {}))
     started = time.monotonic()
     process = subprocess.Popen(
         argv,
@@ -289,4 +310,15 @@ def validate_action(
     if not isinstance(timeout, int) or isinstance(timeout, bool):
         raise AgentError("shell.timeout must be an integer")
     timeout = max(1, min(timeout, max_command_timeout))
-    return kind, {"command": command, "network": network, "timeout": timeout}
+    release = action.get("release_worker", False)
+    if not isinstance(release, bool):
+        raise AgentError("shell.release_worker must be true or false")
+    gpu = action.get("gpu", False)
+    if not isinstance(gpu, bool):
+        raise AgentError("shell.gpu must be true or false")
+    data = {"command": command, "network": network, "timeout": timeout}
+    if release:
+        data["release_worker"] = True
+    if gpu:
+        data["gpu"] = True
+    return kind, data

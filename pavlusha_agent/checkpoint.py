@@ -1,7 +1,8 @@
 """One structurally validated, self-contained committed recovery generation.
 
 The working state and checkpoint envelope share one atomically replaced state.json.
-Only initialization and true HIGH completion replace the envelope. No reconstruction.
+Initialization, true HIGH completion and intentional Worker release replace the envelope.
+All use the same atomic transaction; no reconstruction.
 """
 from __future__ import annotations
 

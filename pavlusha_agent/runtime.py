@@ -15,6 +15,7 @@ from .config import build_worker_system_prompt
 from .core import AgentError, ProviderTurn, _extract_json_object
 from .provider import ChatProvider, WorkerStreamInterrupted, ProviderContextOverflow
 from .reasoning_loop import ReasoningLoopDetector, RECOVERY_MESSAGE
+from .worker_contract import worker_response_format
 from .experiment import ExperimentRecorder
 from .working_context import WorkingContext
 from .sandbox import admit_shell_result, run_shell, validate_action
@@ -53,6 +54,7 @@ def _worker_generation(
     provider: ChatProvider, messages: list[dict[str, object]], *, budget: PromptBudget,
     mode: str, max_recoveries: int, recoveries: int, step: int,
     experiment: ExperimentRecorder, live: LiveConsoleRenderer | None,
+    response_format: dict[str, object],
 ) -> tuple[ProviderTurn, int]:
     """Retry only transport/generation; never re-enter checkpoint/review preparation here."""
     retry = False
@@ -84,9 +86,10 @@ def _worker_generation(
         try:
             # Non-live OFF retains the original non-streaming transport.
             if detector is not None or live is not None:
-                turn = provider.worker_completion(request_messages, on_delta=on_delta)
+                turn = provider.worker_completion(request_messages, on_delta=on_delta,
+                                                  response_format=response_format)
             else:
-                turn = provider.worker_completion(request_messages)
+                turn = provider.worker_completion(request_messages, response_format=response_format)
         except WorkerStreamInterrupted as exc:
             if mode != "recover" or detector is None or detector.confirmation is None:
                 raise
@@ -198,7 +201,8 @@ def run_agent(args: argparse.Namespace) -> int:
     budget = PromptBudget(args.worker_context_budget, args.max_tokens, args.history_context_high)
 
     network_note = (
-        "Network-capable shell and gui_start actions are allowed when you set network=true."
+        "Network permission is granted for this run. Each shell or gui_start action must "
+        "still opt in with network=true to enable network access."
         if args.network
         else "Network access has NOT been granted. Always use network=false, including gui_start."
     )
@@ -286,21 +290,9 @@ def run_agent(args: argparse.Namespace) -> int:
             periodic_review_due = (
                 not checkpoint_reason and periodic_prompt is not None
             )
-            # Frozen Map/State refresh only at startup or a real HIGH checkpoint boundary.
-            # Periodic Project State questionnaires must not change the early prompt prefix.
-            if checkpoint_reason and not checkpoint_active:
-                if project_map is not None:
-                    map_refresh = project_map.refresh()
-                    map_prompt = project_map.message()
-                    if args.verbose:
-                        print(
-                            f"[project-map] checkpoint files={map_refresh.files} parsed={map_refresh.parsed} "
-                            f"reused={map_refresh.reused} removed={map_refresh.removed} "
-                            f"prompt-changed={str(map_refresh.map_changed).lower()}", file=sys.stderr,
-                        )
+            # Keep the early snapshots frozen throughout HIGH. Canonical updates
+            # remain visible in History; refresh snapshots only after completion.
             checkpoint_active = bool(checkpoint_reason)
-            if checkpoint_active:
-                state_prompt = project_state_message(project_state, review_required=checkpoint_reason)
 
             messages = build_worker_messages(
                 system_message, task_message, recent,
@@ -310,7 +302,22 @@ def run_agent(args: argparse.Namespace) -> int:
                 checkpoint_handoff=handoff_prompt,
                 gui_observation=gui_observation,
             )
-            if periodic_review_due:
+            if checkpoint_reason and project_state.get("initialized"):
+                # The schema blocks shell during HIGH. Keep its exit protocol
+                # after History too, especially after accepted project_update
+                # results that otherwise look like permission to resume work.
+                messages.append({"role": "user", "content": (
+                    "CURRENT RUNTIME PHASE: HIGH CHECKPOINT\nPROJECT CHECKPOINT REQUIRED\n"
+                    f"reason: {checkpoint_reason}\n"
+                    "Only project_update and project_review_complete are available; shell/finish are unavailable. "
+                    "A successful project_update does not complete this checkpoint or unlock normal work. "
+                    "Record only remaining durable changes; do not repeat already accepted updates. "
+                    "If there are no remaining durable changes, call project_review_complete now, "
+                    "with a short handoff for the next action. This saves recovery state; "
+                    "it does not finish the task or require all WORK items to be DONE. "
+                    "After Core accepts it, normal actions become available on the next turn."
+                )})
+            elif periodic_review_due:
                 messages.append(periodic_prompt)
             experiment.record_context_preflight(step=step, phase="assembled", breakdown=budget.telemetry())
             pending_context_notice = None
@@ -323,6 +330,11 @@ def run_agent(args: argparse.Namespace) -> int:
                     provider, messages, budget=budget, mode=args.reasoning_loop_recovery,
                     max_recoveries=args.max_reasoning_loop_recoveries,
                     recoveries=consecutive_loop_recoveries, step=step, experiment=experiment, live=live,
+                    response_format=worker_response_format(
+                        initialized=bool(project_state.get("initialized")),
+                        checkpoint_required=bool(checkpoint_reason), periodic_review=periodic_review_due,
+                        gui_enabled=bool(getattr(args, "gui", False)), expert_enabled=expert is not None,
+                    ),
                 )
             except ProviderContextOverflow as exc:
                 # Exactly the strict startup recovery source, never the failed history.
@@ -404,6 +416,8 @@ def run_agent(args: argparse.Namespace) -> int:
                 raise AgentError(f"provider returned empty assistant content ({detail})")
 
             try:
+                if turn.finish_reason == "length":
+                    raise AgentError("Worker completion was truncated at its token ceiling; no action was executed")
                 action = _extract_json_object(raw)
                 requested_kind = action.get("action")
                 if requested_kind == "ask_expert" and expert is not None:
@@ -622,35 +636,73 @@ def run_agent(args: argparse.Namespace) -> int:
                 return 0
 
             requested_network = data["network"]
-            if requested_network and not args.network:
-                result_payload = {
-                    "error": "network_not_granted",
-                    "hint": "Run the controller with --network if the task needs dependency downloads.",
-                    "command": data["command"],
-                }
-            else:
-                if args.verbose:
-                    net = "net" if requested_network else "offline"
-                    print(f"[shell:{net}] {data['command']}", file=sys.stderr)
-                try:
-                    result = run_shell(
-                        workdir,
-                        data["command"],
-                        network=requested_network,
-                        timeout=data["timeout"],
-                        output_limit=args.output_limit,
-                    )
-                    result_payload = admit_shell_result(result, args.output_limit)
-                except OSError as exc:
+            release_worker = bool(data.get("release_worker")) and (not requested_network or args.network)
+            if release_worker:
+                # A fresh generation uses the existing atomic review transaction. The selected
+                # action requests cold continuity; materialized State is its recovery source.
+                store.complete_project_review(step=step, note="Worker release for shell")
+                validate_checkpoint(store.load(), task)
+            with provider.released_worker() if release_worker else nullcontext():
+                if requested_network and not args.network:
                     result_payload = {
+                        "error": "network_not_granted",
+                        "hint": "Run the controller with --network if the task needs dependency downloads.",
                         "command": data["command"],
-                        "network": requested_network,
-                        "launch_error": f"{type(exc).__name__}: {exc}",
                     }
+                else:
+                    if args.verbose:
+                        net = "net" if requested_network else "offline"
+                        print(f"[shell:{net}] {data['command']}", file=sys.stderr)
+                    try:
+                        result = run_shell(
+                            workdir,
+                            data["command"],
+                            network=requested_network,
+                            timeout=data["timeout"],
+                            output_limit=args.output_limit,
+                            **({"gpu": True} if data.get("gpu") else {}),
+                        )
+                        result_payload = admit_shell_result(result, args.output_limit)
+                    except Exception as exc:
+                        if not release_worker and not isinstance(exc, OSError):
+                            raise
+                        result_payload = {
+                            "command": data["command"],
+                            "network": requested_network,
+                            ("launch_error" if isinstance(exc, OSError) else "execution_error"): f"{type(exc).__name__}: {exc}",
+                        }
 
-            if not requested_network or args.network:
-                consecutive_loop_recoveries = 0
-            op_record = store.record_operation(result_payload)
+                if not requested_network or args.network:
+                    consecutive_loop_recoveries = 0
+                # Preserve the factual result before restore: a failed reload must not lose it
+                # or cause automatic re-execution on restart.
+                op_record = store.record_operation(result_payload)
+
+            if release_worker:
+                store = StateStore(state_dir, task, cold_restart=True)
+                project_state = store.get_project_state()
+                state_prompt = project_state_message(project_state)
+                handoff_prompt = handoff_message(store.load().get("checkpoint_handoff", ""))
+                if project_map is not None:
+                    project_map.refresh()
+                    map_prompt = project_map.message()
+                _archive_history(state_dir, recent.step_records())
+                recent = WorkingContext()
+                recent.current_step = step
+                recent.append(assistant_message)
+                budget.reset()
+                checkpoint_active = False
+                invalid_replies = consecutive_reasoning_recoveries = consecutive_loop_recoveries = 0
+                gui_observation = None
+                if gui_runtime is not None:
+                    gui_runtime.close()
+                pending_context_notice = context_notice_message(
+                    "Worker restored after intentional release for bounded shell execution. "
+                    "Resumed from the fresh committed checkpoint with empty previous Recent History. "
+                    "/work remains current; the factual shell result follows.")
+                experiment.record_prefix_changed(step=step, reason="Worker release; cold checkpoint recovery")
+                if live is not None:
+                    live.prefix_changed("Worker restored; cold checkpoint recovery")
             experiment.record_operation_telemetry(step=step, op_id=op_record["id"], result=result_payload)
             if live is not None:
                 live.operation(op_record["id"], result_payload)

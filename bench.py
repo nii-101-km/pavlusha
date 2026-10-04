@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import shlex
 import shutil
@@ -242,8 +243,9 @@ def run_case(
     ]
     if model:
         cmd += ["--model", model]
+    child_env = os.environ.copy()
     if api_key:
-        cmd += ["--api-key", api_key]
+        child_env["AGENT_API_KEY"] = api_key
     if context_budget is not None:
         cmd += ["--worker-context-budget", str(context_budget)]
     if verbose:
@@ -251,7 +253,7 @@ def run_case(
 
     print(f"\n=== {mode.upper()} ===", flush=True)
     print("$ " + shlex.join(cmd), flush=True)
-    completed = subprocess.run(cmd, cwd=ROOT)
+    completed = subprocess.run(cmd, cwd=ROOT, env=child_env)
     try:
         verification = verify_case(run_root / mode)
         verdict = "PASS" if verification["verified_pass"] else "FAIL"

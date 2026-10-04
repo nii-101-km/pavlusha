@@ -31,9 +31,13 @@ class CheckpointSnapshotTests(unittest.TestCase):
     def run_case(self, turns, *, extra=(), edit=None, setup=None):
         seen = []
         self.archived_before_request = []
+        self.request_formats = []
+        self.project_before_request = []
         replies = iter(turns)
         def worker(provider, messages, **kwargs):
             seen.append(copy.deepcopy(messages))
+            self.request_formats.append(copy.deepcopy(kwargs['response_format']))
+            self.project_before_request.append(StateStore(root/'state', 'task').get_project_state())
             archive = root/"state/history_archive.jsonl"
             self.archived_before_request.append(archive.read_text() if archive.exists() else "")
             return next(replies)
@@ -60,6 +64,70 @@ class CheckpointSnapshotTests(unittest.TestCase):
             self.assertFalse((root/'state/reasoning_archive.jsonl').exists())
             state = StateStore(root/'state', 'task').load()
         return seen, archived, state
+
+    @unittest.skipUnless(importlib.util.find_spec('tree_sitter') and importlib.util.find_spec('tree_sitter_python'), 'requires tree-sitter')
+    def test_high_freezes_serialized_map_state_until_accepted_completion(self):
+        def setup(work):
+            (work/'module.py').write_text('def before(): pass\n')
+        def edit(work, command):
+            if command == 'edit':
+                (work/'module.py').write_text('def after(): pass\n')
+        def update(decision):
+            return turn({'action': 'project_update', 'changes': [
+                {'op': 'add_design', 'decision': decision, 'rationale': 'observed evidence'},
+            ]})
+        seen, archived, state = self.run_case([
+            init_turn(reasoning='OLD_PLAN'),
+            turn({'action': 'shell', 'command': 'edit'}, reasoning='OLD_ACTION'),
+            update('ORDINARY_CHANGE'),
+            update('HIGH_CHANGE_ONE'),
+            update('HIGH_CHANGE_TWO'),
+            turn({'action': 'project_review_complete', 'handoff': 'NEXT_ACTION'}, reasoning='REVIEW_ACTION'),
+            turn({'action': 'shell', 'command': 'after reset'}),
+            done('after reset'),
+            turn({'action': 'finish', 'summary': 'done'}),
+        ], extra=['--project-map', 'on', '--history-high', '3'], setup=setup, edit=edit)
+
+        def snapshots(request):
+            return json.dumps([layer(request, 'PROJECT MAP'), layer(request, 'PROJECT STATE')],
+                              ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+        baseline = snapshots(seen[2])  # last ordinary request before HIGH
+        for index in range(3, 6):
+            with self.subTest(step=index + 1):
+                self.assertEqual(snapshots(seen[index]), baseline)
+                self.assertEqual(seen[index][:4], seen[2][:4])
+                self.assertIn('OLD_PLAN', str(seen[index]))
+                self.assertIn('ORDINARY_CHANGE', str(seen[index][4:]))
+                self.assertNotIn('ORDINARY_CHANGE', layer(seen[index], 'PROJECT STATE')['content'])
+                self.assertFalse(self.archived_before_request[index])
+                self.assertTrue(seen[index][-1]['content'].startswith('CURRENT RUNTIME PHASE: HIGH CHECKPOINT'))
+                schema = self.request_formats[index]['json_schema']['schema']
+                self.assertEqual({b['properties']['action']['const'] for b in schema['anyOf']},
+                                 {'project_update', 'project_review_complete'})
+        for index, decision in ((4, 'HIGH_CHANGE_ONE'), (5, 'HIGH_CHANGE_TWO')):
+            self.assertIn(decision, str(seen[index][4:]))
+            self.assertIn(decision, str(self.project_before_request[index]['design']))
+            self.assertNotIn(decision, layer(seen[index], 'PROJECT STATE')['content'])
+        refreshed = seen[6]
+        self.assertNotEqual(snapshots(refreshed), baseline)
+        self.assertIn('after', layer(refreshed, 'PROJECT MAP')['content'])
+        self.assertNotIn('def before', layer(refreshed, 'PROJECT MAP')['content'])
+        for decision in ('ORDINARY_CHANGE', 'HIGH_CHANGE_ONE', 'HIGH_CHANGE_TWO'):
+            self.assertIn(decision, layer(refreshed, 'PROJECT STATE')['content'])
+        self.assertIn('NEXT_ACTION', layer(refreshed, 'CHECKPOINT HANDOFF')['content'])
+        self.assertNotIn('OLD_PLAN', str(refreshed))
+        self.assertNotIn('OLD_ACTION', str(refreshed))
+        self.assertNotIn('REVIEW_ACTION', str(refreshed))
+        self.assertNotIn('PROJECT STATE UPDATED:', str(refreshed))
+        self.assertNotIn('CURRENT RUNTIME PHASE: HIGH CHECKPOINT', str(refreshed))
+        self.assertEqual(len(refreshed), 6)  # system/task/map/state/handoff/reset notice
+        self.assertTrue(self.archived_before_request[6])
+        self.assertEqual({record['step'] for record in archived}, set(range(1, 7)))
+        schema = self.request_formats[6]['json_schema']['schema']
+        self.assertEqual({b['properties']['action']['const'] for b in schema['anyOf']},
+                         {'shell', 'finish', 'project_update'})
+        self.assertEqual(state['recovery_checkpoint']['step'], 6)
+        self.assertEqual(state['counters']['operation'], 2)
 
     def test_voluntary_checkpoint_button_is_rejected_below_high(self):
         seen, archived, state = self.run_case([
@@ -159,9 +227,9 @@ class CheckpointSnapshotTests(unittest.TestCase):
             turn({'action':'finish','summary':'done'}),
         ], extra=['--project-map','on','--project-review-every','3','--history-high','5'],setup=setup,edit=edit)
         first=layer(seen[0],'PROJECT MAP')
-        for req in seen[1:5]: self.assertEqual(first, layer(req,'PROJECT MAP'))
+        for req in seen[1:7]: self.assertEqual(first, layer(req,'PROJECT MAP'))
         self.assertIn('PROJECT STATE UPDATED', str(seen[4]))
-        fresh=layer(seen[5],'PROJECT MAP')
+        fresh=layer(seen[7],'PROJECT MAP')
         self.assertNotEqual(first,fresh)
         self.assertIn('created',fresh['content']); self.assertIn('after',fresh['content'])
         self.assertNotIn('old.py',fresh['content']); self.assertNotIn('before',fresh['content'])

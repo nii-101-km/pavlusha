@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import copy
 import hashlib
 import json
+import math
 import os
 import shutil
 import signal
@@ -99,6 +101,101 @@ class ChatProvider:
         if self.api_key:
             headers["Authorization"] = "Bearer " + self.api_key
         return headers
+
+    def _model_lifecycle_request(self, path: str, payload=None) -> dict[str, Any]:
+        """LM Studio native API only; finite requests, no guessed unload controls."""
+        if not math.isfinite(self.timeout) or self.timeout <= 0:
+            raise AgentError("Worker lifecycle requires a finite positive API timeout")
+        root = self.base_url.removesuffix("/v1")
+        request = urllib.request.Request(
+            root + "/api/v1/models" + path, headers=self._headers(),
+            data=None if payload is None else json.dumps(payload).encode("utf-8"),
+            method="GET" if payload is None else "POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                body = json.load(response)
+            if not isinstance(body, dict):
+                raise ValueError("expected an object")
+            return body
+        except (OSError, ValueError, TypeError) as exc:
+            raise AgentError(f"Worker lifecycle API {path or '/'} failed: {exc}") from exc
+
+    def _loaded_worker_instances(self):
+        models = self._model_lifecycle_request("").get("models")
+        if not isinstance(models, list):
+            raise AgentError("Worker release requires LM Studio native /api/v1/models")
+        instances = []
+        for model in models:
+            if not isinstance(model, dict) or model.get("type") != "llm":
+                continue
+            for instance in model.get("loaded_instances", []):
+                if isinstance(instance, dict):
+                    instances.append((model, instance))
+        return instances
+
+    @contextmanager
+    def released_worker(self):
+        """Unload one unambiguous Worker, restore even after an uncertain unload.
+
+        No inference/KV state is retained. Backend failure can prevent restoration;
+        in that case raise rather than resume inference or rerun the shell command.
+        """
+        selected = self.resolve_model()
+        matches = [(m, i) for m, i in self._loaded_worker_instances()
+                   if selected in (m.get("key"), i.get("id"))]
+        if len(matches) != 1:
+            raise AgentError("Worker release requires exactly one matching loaded instance")
+        model, instance = matches[0]
+        key, instance_id, config = model.get("key"), instance.get("id"), instance.get("config")
+        # Explicit fields in LM Studio 0.4.25's native model-load request schema.
+        # Loaded-instance metadata can contain more; those fields use backend defaults.
+        supported = {"context_length", "eval_batch_size", "flash_attention",
+                     "num_experts", "offload_kv_cache_to_gpu", "physical_batch_size",
+                     "parallel", "context_checkpoints", "reasoning_budget_message",
+                     "speculative_draft_mtp", "speculative_draft_simple",
+                     "speculative_draft_model", "speculative_draft_max_tokens",
+                     "speculative_draft_min_tokens", "speculative_draft_min_continue_probability",
+                     "prompt_template", "ttl_seconds"}
+        if (not isinstance(key, str) or not key or not isinstance(instance_id, str)
+                or not instance_id):
+            raise AgentError("Worker release requires a model key and instance ID")
+        config = config if isinstance(config, dict) else {}
+        restore_config = {k: copy.deepcopy(v) for k, v in config.items() if k in supported}
+        load = {"model": key, **restore_config, "echo_load_config": True}
+        try:
+            reply = self._model_lifecycle_request("/unload", {"instance_id": instance_id})
+            if reply.get("instance_id") != instance_id:
+                raise AgentError("Worker unload returned a different instance")
+            if any(i.get("id") == instance_id for _, i in self._loaded_worker_instances()):
+                raise AgentError("Worker instance remains loaded; shell was not launched")
+            yield
+        finally:
+            # A lost unload response may still mean the server unloaded the model.
+            try:
+                try:
+                    remaining = [(m, i) for m, i in self._loaded_worker_instances()
+                                 if m.get("key") == key]
+                except AgentError:
+                    # An unavailable status endpoint must not skip the reload attempt.
+                    remaining = []
+                if remaining:
+                    if len(remaining) != 1 or remaining[0][1].get("id") != instance_id:
+                        raise AgentError("Worker instance changed during release; cannot safely restore")
+                    self.model = instance_id
+                else:
+                    reply = self._model_lifecycle_request("/load", load)
+                    restored_id = reply.get("instance_id")
+                    if (reply.get("status") != "loaded" or not isinstance(restored_id, str)
+                            or not restored_id):
+                        raise AgentError("Worker restore did not confirm a loaded instance")
+                    restored = [(m, i) for m, i in self._loaded_worker_instances()
+                                if m.get("key") == key]
+                    if len(restored) != 1 or restored[0][1].get("id") != restored_id:
+                        raise AgentError("Worker restore did not confirm the same model key")
+                    self.model = restored_id
+            except AgentError as exc:
+                raise AgentError(f"Worker restoration failed; runtime stopped: {exc}") from exc
 
     def resolve_model(self) -> str:
         if self.model:

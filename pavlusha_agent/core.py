@@ -94,17 +94,20 @@ def _extract_json_object(text: str) -> dict[str, Any]:
     except json.JSONDecodeError:
         pass
 
-    decoder = json.JSONDecoder()
-    for index, char in enumerate(candidate):
-        if char != "{":
-            continue
-        try:
-            value, _ = decoder.raw_decode(candidate[index:])
-        except json.JSONDecodeError:
-            continue
-        if isinstance(value, dict):
-            return value
-    raise AgentError("model did not return a JSON object")
+    index = candidate.find("{")
+    if index < 0:
+        raise AgentError("model did not return a JSON object")
+    try:
+        value, _ = json.JSONDecoder().raw_decode(candidate[index:])
+    except json.JSONDecodeError as exc:
+        # Never reinterpret a nested change/tool argument as the action when its
+        # enclosing object is malformed. Let the Worker repair the whole envelope.
+        raise AgentError(
+            f"model returned malformed JSON action: {exc.msg} at line {exc.lineno}, "
+            f"column {exc.colno}. Return one complete JSON object with a top-level "
+            "'action' field and all closing braces/brackets"
+        ) from exc
+    return value
 
 
 def _normalized(text: str) -> str:

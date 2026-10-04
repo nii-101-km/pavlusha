@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import io
 import json
+import os
+import subprocess
 from pathlib import Path
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from unittest.mock import patch
 
 import agent
 import bench
@@ -44,6 +49,50 @@ class ContextPressureTokenLimitTests(unittest.TestCase):
         self.assertNotIn("do not", msg.lower())
         self.assertNotIn("avoid", msg.lower())
         self.assertNotIn("conserve", msg.lower())
+
+
+class BenchmarkCredentialTests(unittest.TestCase):
+    def test_secret_reaches_child_environment_without_argv_or_command_log_exposure(self):
+        secret = "benchmark-regression-secret"
+        actual_run = subprocess.run
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            case = root / "pressure_guided"
+            (case / "work").mkdir(parents=True)
+            (case / "task.txt").write_text("synthetic benchmark task", encoding="utf-8")
+            (root / "agent.py").write_text(
+                "import os, sys\n"
+                f"assert os.environ['AGENT_API_KEY'] == {secret!r}\n"
+                f"assert all({secret!r} not in argument for argument in sys.argv)\n"
+                "assert os.environ['BENCHMARK_TEST_INHERITED'] == 'preserved'\n",
+                encoding="utf-8",
+            )
+            def launch(cmd, **kwargs):
+                result = actual_run(cmd, **kwargs, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                return result
+            output = io.StringIO()
+            with patch.object(bench, "ROOT", root), \
+                 patch.object(bench.subprocess, "run", side_effect=launch) as child, \
+                 patch.object(bench, "verify_case", return_value={"verified_pass": True, "tests_unchanged": True}), \
+                 patch.dict(os.environ, {"AGENT_API_KEY": "inherited-key", "BENCHMARK_TEST_INHERITED": "preserved"}), \
+                 redirect_stdout(output):
+                result = bench.run_case(
+                    root, "pressure_guided", base_url="http://example.invalid/v1", model="test-model",
+                    api_key=secret, token_limit=12000, managed_budget=1024, context_budget=40000,
+                    soft_ratio=.5, strong_ratio=.7, urgent_ratio=.9,
+                    gate_enter_ratio=.7, gate_release_ratio=.5, max_steps=3,
+                    temperature=0, verbose=True,
+                )
+                self.assertEqual(os.environ["AGENT_API_KEY"], "inherited-key")
+            self.assertEqual(result, 0)
+            child.assert_called_once()
+            argv = child.call_args.args[0]
+            self.assertNotIn("--api-key", argv)
+            self.assertNotIn(secret, " ".join(argv))
+            self.assertEqual(child.call_args.kwargs["env"]["AGENT_API_KEY"], secret)
+            self.assertIn("$ ", output.getvalue())
+            self.assertNotIn(secret, output.getvalue())
 
 
 class BenchmarkFixtureTests(unittest.TestCase):
