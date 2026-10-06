@@ -247,7 +247,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_STATE_MAX_TOKENS,
         help="total completion-token ceiling for one State Manager call, including reasoning",
     )
+    parser.add_argument("--reasoning-effort", help="optional Worker reasoning_effort string passed unchanged to provider; omission uses provider/model default")
     parser.add_argument("--temperature", type=float, default=0.1)
+    parser.add_argument("--interactive", action="store_true", help="terminal chat; Ctrl+Z requests a safe pause, /quit ends the session")
     parser.add_argument("--live", action="store_true", help="append-only human-friendly live terminal log with streamed Worker output")
     parser.add_argument("-v", "--verbose", action="store_true")
     obsolete = {

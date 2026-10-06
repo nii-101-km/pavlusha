@@ -16,7 +16,7 @@ def _variant(field, name, properties=None, required=()):
 
 def worker_response_format(*, initialized: bool, checkpoint_required: bool = False,
                            periodic_review: bool = False, gui_enabled: bool = False,
-                           expert_enabled: bool = False) -> dict:
+                           expert_enabled: bool = False, interactive: bool = False) -> dict:
     """Select canonical response shapes using the same phase gates as run_agent.
 
     Whitespace normalization, state IDs/transitions, byte limits, permissions and
@@ -90,6 +90,9 @@ def worker_response_format(*, initialized: bool, checkpoint_required: bool = Fal
                                                   "delay": delay}, ("text",)),
                 _variant("action", "gui_close", {"delay": delay}),
             ])
+    if interactive:
+        actions.extend([_variant("action", name, {"text": text}, ("text",))
+                        for name in ("message", "wait_for_user")])
     schema = actions[0] if len(actions) == 1 else {"anyOf": actions}
     return {"type": "json_schema", "json_schema": {
         "name": "worker_action", "strict": True, "schema": schema,

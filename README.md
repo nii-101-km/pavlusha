@@ -59,8 +59,37 @@ python3 -m venv .venv
 pip install -r requirements.txt
 python agent.py --help
 python agent.py --workdir ./agent-work --self-test-bwrap
-python agent.py --workdir ./agent-work --live "Inspect this work directory and report its contents."
 ```
+
+To run a task against an existing project, replace `project_dir` with its absolute path:
+
+```bash
+project_dir="/absolute/path/to/your/existing-project"
+python agent.py \
+  --workdir "$project_dir" \
+  --state-dir "${project_dir}.pavlusha-state/task-001" \
+  --model qwen/qwen3.8-27b \
+  --worker-context-budget 117248 --max-tokens 8192 --max-steps -1 \
+  --project-map on --history-context-high 0.85 --history-high 30 \
+  --project-review-every 10 --command-timeout 300 \
+  --reasoning-effort low \
+  --interactive --live \
+  "Inspect this project, run its existing tests, and report concrete failures."
+```
+
+Match the model and context budget to your loaded model; omit `--worker-context-budget`
+for LM Studio's automatic context discovery. Effort values are provider-defined;
+omit `--reasoning-effort` to retain its default. The State directory must remain outside
+`--workdir`. Use a separate State directory for each new TASK; retain it and the same TASK
+text when recovering an interrupted run.
+
+**One invocation executes one atomic TASK, and its Project State belongs to that TASK.**
+Interactive communication/intervention is available while it is active: press **Ctrl+Z**,
+wait for **PAUSED — safe to type**, then enter a message or press empty Enter to resume.
+Accepted **FINISH terminates the runtime** in both modes.
+
+Network access is opt-in: add `--network` only when the task needs it, such as downloading
+missing dependencies. It is intentionally omitted from the generic example.
 
 The default Worker endpoint is `http://127.0.0.1:1234/v1`. Select a loaded model with
 `--model` or `AGENT_MODEL`; otherwise the provider is queried for models.
@@ -73,13 +102,17 @@ Set credentials in the controller environment, without committing their values.
 | Control | Meaning |
 | --- | --- |
 | `--workdir PATH` / `--state-dir PATH` | Persistent work files / separate controller State. Default State: `<workdir>.pavlusha-state`. |
+| `--interactive` | Communication and safe intervention within one active TASK; FINISH terminates the runtime. |
+| `--reasoning-effort STRING` | Worker provider passthrough; omitted by default. |
+| `--worker-context-budget N` | Override context capacity; omission discovers the loaded LM Studio context length. |
 | `--project-map on` | Frozen checkpoint navigation snapshot; ordinary steps do not refresh it. |
 | `--project-review-every 10` | Periodic review after executed shell operations; `0` disables it. |
 | `--history-high 30` | Request a fresh HIGH checkpoint at 30 retained Worker steps. |
 | `--history-context-high 0.85` | Request HIGH when the last successful provider prompt usage reaches this fraction of context capacity. |
 | `--max-steps 60` | Step watchdog; `-1` allows unlimited Worker turns. |
-| `--max-tokens 40000` | Worker completion ceiling, including reasoning. |
-| `--output-limit 12000` | Hard stdout/stderr admission limit. |
+| `--max-tokens 8192` | Worker completion ceiling, including reasoning. |
+| `--command-timeout 300` | Maximum seconds per shell command; Worker-selected timeouts are clamped to this ceiling. |
+| `--output-limit 24000` | Hard stdout/stderr admission limit. |
 | `--network`, `--gui`, `--live` | Enable network permission, private GUI tools and terminal presentation. |
 
 `--history-window`, `--raw-reasoning-limit`/`--worker-reasoning-attractor-tokens`,
@@ -248,8 +281,28 @@ local benchmark runs, OCR outputs and downloaded models are not distributed here
 
 - [Project State](PROJECT_STATE.md): State shape, evidence, review and handoff contracts.
 - [Atomic checkpoint/recovery](docs/atomic-checkpoint-recovery.md): committed generations, strict restart, failure tests and durability limits.
+- [Interactive chat](docs/interactive-chat.md): safe boundaries, held proposals, reasoning effort and terminal FINISH.
 - [GUI tools](docs/gui-tools.md): private display, actions, browser lifecycle and integration checks.
 
 ## License
 
 Licensed under the [MIT License](LICENSE).
+
+## Interactive chat (v0.3)
+
+`--interactive` keeps the Worker autonomous within one active TASK and requires terminal
+stdin. It enables the existing live output automatically. Press **Ctrl+Z** to request
+PAUSE, then wait for **PAUSED — safe to type** before composing an intervention.
+A message plus Enter resumes with that input; empty Enter resumes a held proposal
+without a message. `/quit` or EOF at the paused prompt ends the session.
+**FINISH terminates the runtime**; a new TASK needs a separate invocation and its own State.
+Piped task input remains available without interactive mode.
+
+Worker can use `message` to speak and continue, or `wait_for_user` when input is necessary.
+See [interactive lifecycle, boundaries, recovery and limitations](docs/interactive-chat.md).
+
+`--reasoning-effort` accepts a string and passes it unchanged in every Worker provider
+request, including after `release_worker`. Omission preserves provider/model default
+behavior. Values are not locally normalized or replaced: provider rejection remains an
+explicit runtime error, with no hidden fallback. This is a request option; the existing
+model unload/restore configuration handling is unchanged.

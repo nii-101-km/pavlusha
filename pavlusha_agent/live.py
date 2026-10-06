@@ -38,7 +38,7 @@ class LiveConsoleRenderer:
         code = {"heading": "1", "worker": "1", "shell": "1;36",
                 "state": "1;36", "external": "1;35", "success": "1;32",
                 "warning": "1;33", "error": "1;31", "metadata": "2",
-                "command": "1", "reasoning": "2"}[style]
+                "user_chat": "1;96", "agent_chat": "1;95", "command": "1", "reasoning": "2"}[style]
         return f"\x1b[{code}m{text}\x1b[0m" if self.color else text
 
     def _markdown(self, text: str) -> None:
@@ -123,6 +123,15 @@ class LiveConsoleRenderer:
         if len(one_line) > 88:
             one_line = one_line[:85] + "..."
         self._line(self._paint("metadata", f"task  {one_line}"))
+
+    def chat_message(self, speaker: str, text: str) -> None:
+        self._close_streams()
+        style = "user_chat" if speaker == "USER" else "agent_chat"
+        self._line(self._paint(style, f"{speaker}:\n{text}"))
+
+    def chat_status(self, text: str) -> None:
+        self._close_streams()
+        self._line(self._paint("warning", text))
 
     def step(self, step: int, max_steps: int, **legacy_telemetry: Any) -> None:
         self._close_streams()

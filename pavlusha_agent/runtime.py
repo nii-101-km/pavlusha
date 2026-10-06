@@ -27,6 +27,8 @@ from .live import LiveConsoleRenderer
 from .project_map import ProjectMap
 from .gui import GUI_ACTIONS, GuiRuntime, validate_gui_action
 from .expert import Expert, EXPERT_PROMPT
+from .interactive import (InteractiveSession, SessionEnded, RestartWorkerTurn,
+                          CHAT_PROMPT, validate_chat_action)
 
 
 class PromptBudget:
@@ -54,11 +56,13 @@ def _worker_generation(
     provider: ChatProvider, messages: list[dict[str, object]], *, budget: PromptBudget,
     mode: str, max_recoveries: int, recoveries: int, step: int,
     experiment: ExperimentRecorder, live: LiveConsoleRenderer | None,
-    response_format: dict[str, object],
+    response_format: dict[str, object], before_generation=None, reasoning_effort: str | None = None,
 ) -> tuple[ProviderTurn, int]:
     """Retry only transport/generation; never re-enter checkpoint/review preparation here."""
     retry = False
     while True:
+        if before_generation is not None:
+            before_generation()
         request_messages = copy.deepcopy(messages)
         if retry:
             request_messages.append(copy.deepcopy(RECOVERY_MESSAGE))
@@ -83,13 +87,17 @@ def _worker_generation(
 
         if live is not None:
             live.begin_worker()
+        if before_generation is not None:
+            before_generation()
+        options = {"response_format": response_format}
+        if reasoning_effort is not None:
+            options["reasoning_effort"] = reasoning_effort
         try:
             # Non-live OFF retains the original non-streaming transport.
             if detector is not None or live is not None:
-                turn = provider.worker_completion(request_messages, on_delta=on_delta,
-                                                  response_format=response_format)
+                turn = provider.worker_completion(request_messages, on_delta=on_delta, **options)
             else:
-                turn = provider.worker_completion(request_messages, response_format=response_format)
+                turn = provider.worker_completion(request_messages, **options)
         except WorkerStreamInterrupted as exc:
             if mode != "recover" or detector is None or detector.confirmation is None:
                 raise
@@ -148,6 +156,18 @@ def build_worker_messages(
 
 
 def run_agent(args: argparse.Namespace) -> int:
+    if not getattr(args, "interactive", False):
+        return _run_agent(args)
+    live = LiveConsoleRenderer()
+    with InteractiveSession(live) as chat:
+        try:
+            return _run_agent(args, chat=chat, interactive_live=live)
+        except SessionEnded:
+            live.chat_status("SESSION ENDED")
+            return 0
+
+
+def _run_agent(args: argparse.Namespace, *, chat=None, interactive_live=None) -> int:
     expert = Expert(args) if getattr(args, "expert", "off") == "on" else None
     if shutil.which("bwrap") is None:
         raise AgentError("bubblewrap is not installed (expected executable: bwrap)")
@@ -157,7 +177,12 @@ def run_agent(args: argparse.Namespace) -> int:
     if not workdir.is_dir():
         raise AgentError(f"workdir is not a directory: {workdir}")
 
-    task = " ".join(args.task).strip() if args.task else sys.stdin.read().strip()
+    if chat is not None and not args.task:
+        initial = WorkingContext()
+        chat.boundary(initial, force=True)
+        task = initial.messages()[0]["content"].split("\n", 1)[1] if initial.messages() else ""
+    else:
+        task = " ".join(args.task).strip() if args.task else sys.stdin.read().strip()
     if not task:
         raise AgentError("task is empty")
 
@@ -213,7 +238,7 @@ def run_agent(args: argparse.Namespace) -> int:
     )
     system_message = {
         "role": "system",
-        "content": build_worker_system_prompt(gui_enabled=bool(getattr(args, "gui", False))) + "\n\n" + network_note + project_map_note + ("\n\n" + EXPERT_PROMPT if expert else ""),
+        "content": build_worker_system_prompt(gui_enabled=bool(getattr(args, "gui", False))) + "\n\n" + network_note + project_map_note + ("\n\n" + EXPERT_PROMPT if expert else "") + (CHAT_PROMPT if chat else ""),
     }
     task_message = {"role": "user", "content": "TASK:\n" + task}
 
@@ -227,7 +252,7 @@ def run_agent(args: argparse.Namespace) -> int:
     invalid_replies = 0
     consecutive_reasoning_recoveries = 0
     consecutive_loop_recoveries = 0
-    live = LiveConsoleRenderer() if getattr(args, "live", False) else None
+    live = interactive_live or (LiveConsoleRenderer() if getattr(args, "live", False) else None)
     if live is not None:
         expert_status = ("off" if expert is None else
                          "enabled · network not granted" if not expert.network else
@@ -245,6 +270,9 @@ def run_agent(args: argparse.Namespace) -> int:
     gui_observation: dict[str, object] | None = None
     overflow_recovered_generations: set[str] = set()
 
+    if chat is not None and args.task:
+        live.chat_message("USER", task)
+
     with (gui_runtime if gui_runtime is not None else nullcontext()):
         for step in itertools.count(1):
             if args.max_steps != -1 and step > args.max_steps:
@@ -252,6 +280,8 @@ def run_agent(args: argparse.Namespace) -> int:
             if args.verbose:
                 print(f"[agent] step {step}/{args.max_steps}", file=sys.stderr)
             recent.current_step = step
+            if chat is not None:
+                chat.boundary(recent)
             # HIGH now requests a fresh checkpoint, never a destructive partial cut.
             # Keep all steps (including review attempts) until that checkpoint succeeds.
             history_overflow = recent.step_count() >= args.history_high
@@ -325,6 +355,14 @@ def run_agent(args: argparse.Namespace) -> int:
             if live is not None:
                 live.step(step, args.max_steps)
 
+            # Cold overflow recovery clears History. Fail explicitly rather than lose/replay chat.
+            interactive_evidence = chat is not None and any(m.get("content", "").startswith(
+                "USER MESSAGE AT SAFE BOUNDARY:\n") for m in recent.messages())
+
+            def before_generation():
+                if chat is not None and chat.boundary(recent):
+                    raise RestartWorkerTurn()
+
             try:
                 turn, consecutive_loop_recoveries = _worker_generation(
                     provider, messages, budget=budget, mode=args.reasoning_loop_recovery,
@@ -333,10 +371,17 @@ def run_agent(args: argparse.Namespace) -> int:
                     response_format=worker_response_format(
                         initialized=bool(project_state.get("initialized")),
                         checkpoint_required=bool(checkpoint_reason), periodic_review=periodic_review_due,
-                        gui_enabled=bool(getattr(args, "gui", False)), expert_enabled=expert is not None,
-                    ),
+                        gui_enabled=bool(getattr(args, "gui", False)), expert_enabled=expert is not None, interactive=chat is not None,
+                    ), before_generation=before_generation if chat is not None else None,
+                    reasoning_effort=getattr(args, "reasoning_effort", None),
                 )
+            except RestartWorkerTurn:
+                continue
             except ProviderContextOverflow as exc:
+                if interactive_evidence:
+                    raise AgentError("Context overflow with interactive evidence in Recent History; "
+                                     "stopped without discarding or replaying user messages. "
+                                     "/work and committed checkpoint preserved.") from exc
                 # Exactly the strict startup recovery source, never the failed history.
                 checkpoint = validate_checkpoint(store.load(), task)
                 identity = checkpoint["sha256"]
@@ -396,6 +441,10 @@ def run_agent(args: argparse.Namespace) -> int:
             if live is not None:
                 live.usage(prompt=turn.prompt_tokens, context_budget=args.worker_context_budget, completion=turn.completion_tokens, reasoning=turn.reasoning_tokens)
 
+            if chat is not None and chat.boundary(recent):
+                # Proposed action has not entered dispatch; regenerate with the intervention.
+                continue
+
             if turn.reasoning_content.strip():
                 recent.append({"role": "user", "content": (
                     "WORKER REASONING (working hypotheses, not project truth):\n" + turn.reasoning_content
@@ -420,7 +469,11 @@ def run_agent(args: argparse.Namespace) -> int:
                     raise AgentError("Worker completion was truncated at its token ceiling; no action was executed")
                 action = _extract_json_object(raw)
                 requested_kind = action.get("action")
-                if requested_kind == "ask_expert" and expert is not None:
+                if requested_kind in {"message", "wait_for_user"}:
+                    if chat is None:
+                        raise AgentError("chat actions require --interactive")
+                    kind, data = validate_chat_action(action)
+                elif requested_kind == "ask_expert" and expert is not None:
                     kind, data = "ask_expert", {"question": action.get("question"), "context": action.get("context")}
                 elif requested_kind in {"project_init", "project_update", "project_review_skip", "project_review_complete"}:
                     kind, data = validate_project_action(action)
@@ -458,14 +511,14 @@ def run_agent(args: argparse.Namespace) -> int:
             # Core-owned Project State gates. An uninitialized project must be materialized before
             # normal work. A required checkpoint may be updated in multiple atomic batches, but shell
             # and finish remain blocked until project_review_complete.
-            if not project_state.get("initialized") and kind != "project_init":
+            if not project_state.get("initialized") and kind not in {"project_init", "message", "wait_for_user"}:
                 recent.append({"role": "assistant", "content": json.dumps(action, ensure_ascii=False)})
                 recent.append({"role": "user", "content": (
                     "PROJECT CHECKPOINT REQUIRED: Project State is uninitialized. "
                     "Call project_init before shell or finish."
                 )})
                 continue
-            if project_state.get("initialized") and checkpoint_reason and kind not in {"project_update", "project_review_complete"}:
+            if project_state.get("initialized") and checkpoint_reason and kind not in {"project_update", "project_review_complete", "message", "wait_for_user"}:
                 recent.append({"role": "assistant", "content": json.dumps(action, ensure_ascii=False)})
                 recent.append({"role": "user", "content": (
                     "PROJECT CHECKPOINT REQUIRED: " + checkpoint_reason + ". "
@@ -473,7 +526,7 @@ def run_agent(args: argparse.Namespace) -> int:
                     "Normal shell/finish actions are blocked until the checkpoint is complete."
                 )})
                 continue
-            if project_state.get("initialized") and periodic_review_due and kind not in {"project_update", "project_review_skip"}:
+            if project_state.get("initialized") and periodic_review_due and kind not in {"project_update", "project_review_skip", "message", "wait_for_user"}:
                 recent.append({"role": "assistant", "content": json.dumps(action, ensure_ascii=False)})
                 recent.append({"role": "user", "content": (
                     f"PERIODIC PROJECT STATE REVIEW: {args.project_review_every} shell operations completed. "
@@ -489,11 +542,24 @@ def run_agent(args: argparse.Namespace) -> int:
                 )})
                 continue
 
+            # Dispatch admission is the last safe boundary. Everything below through result
+            # recording/restoration is one indivisible operation; a later signal reserves the next boundary.
+            if chat is not None and chat.boundary(recent):
+                continue
             assistant_message = {"role": "assistant", "content": json.dumps(action, ensure_ascii=False)}
             recent.append(assistant_message)
             experiment.record_worker_action(step=step, kind=kind, data=data)
             if live is not None:
                 live.action(kind, data)
+            if kind in {"message", "wait_for_user"}:
+                live.chat_message("P.A.V.L.U.S.H.A.", data["text"])
+                # Like every other action, close the assistant action with factual tool evidence.
+                # Ending the prompt on assistant can be interpreted as assistant-prefill/EOS.
+                recent.append({"role": "user", "content": "MESSAGE RESULT: user-facing text displayed."},
+                              kind="message_result")
+                if kind == "wait_for_user":
+                    chat.boundary(recent, force=True)
+                continue
             if kind == "project_init":
                 try:
                     project_state = store.initialize_project(data, step=step)
@@ -629,7 +695,9 @@ def run_agent(args: argparse.Namespace) -> int:
                     )})
                     continue
                 store.mark_finished(data["summary"])
-                if live is not None:
+                if chat is not None:
+                    live.chat_message("P.A.V.L.U.S.H.A.", data["summary"])
+                elif live is not None:
                     live.complete(data["summary"])
                 else:
                     print(data["summary"])

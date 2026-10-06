@@ -234,6 +234,8 @@ class PrivateDisplay:
                 input=json.dumps(action, ensure_ascii=False).encode("utf-8"),
                 capture_output=True,
                 env=self.environment,
+                # Terminal Ctrl+Z belongs to Core; never suspend an active helper.
+                start_new_session=True,
                 timeout=min(timeout, 3.0),
                 check=False,
             )
