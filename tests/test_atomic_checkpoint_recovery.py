@@ -163,7 +163,7 @@ class AtomicCheckpointTests(unittest.TestCase):
                     store=StateStore(state_dir,'task')
                     store.initialize_project(json.loads(init_turn().content),step=1)
                     raw=store.load(); del raw['recovery_checkpoint']; store._write_atomic(raw)
-                args=build_parser().parse_args(['--workdir',str(work),'--state-dir',str(state_dir),
+                args=build_parser().parse_args(['--no-interactive', '--no-live', '--no-network', '--project-map', 'off', '--workdir',str(work),'--state-dir',str(state_dir),
                     '--model','fake','--worker-context-budget','40000','task'])
                 before={p.name:p.read_bytes() for p in state_dir.iterdir()}
                 with patch('pavlusha_agent.runtime.shutil.which',return_value='/fake/bwrap'), \

@@ -126,7 +126,7 @@ class RuntimeArchitectureTests(unittest.TestCase):
              patch("pavlusha_agent.provider.ChatProvider.stateless_completion", manager), \
              patch("pavlusha_agent.runtime.run_shell", side_effect=shell), \
              redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-            args = build_parser().parse_args(["--workdir", tmp + "/work", "--state-dir", tmp + "/state",
+            args = build_parser().parse_args(['--no-interactive', '--no-live', '--no-network', '--project-map', 'off', "--workdir", tmp + "/work", "--state-dir", tmp + "/state",
                                               "--model", "m", "--worker-context-budget", "40000",
                                               "--raw-reasoning-limit", "999", "--project-review-every", "0", "task"])
             self.assertEqual(run_agent(args), 0)

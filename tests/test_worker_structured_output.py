@@ -59,6 +59,8 @@ class SchemaTests(unittest.TestCase):
             {'action': 'right_click', 'x': 799, 'y': 0},
             {'action': 'drag', 'x1': 0, 'y1': 0, 'x2': 799, 'y2': 599},
             {'action': 'type_text', 'text': ''}, {'action': 'gui_close'},
+            {'action': 'press_key', 'key': 'l', 'modifiers': ['ctrl']},
+            {'action': 'hold_key', 'key': 'w', 'duration': 0.5},
         ]
         self.assertEqual({x['action'] for x in variants}, GUI_ACTIONS)
         for action in variants:
@@ -164,11 +166,11 @@ class RuntimeWireTests(unittest.TestCase):
             return ShellResult(command, False, 0, False, 'OK', '', 0.01)
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            args = build_parser().parse_args([
+            args = build_parser().parse_args(['--no-interactive', '--no-live', '--no-network', '--project-map', 'off',
                 '--workdir', str(root/'work'), '--state-dir', str(root/'state'), '--model', 'scripted',
                 '--worker-context-budget', '40000', '--max-tokens', '1024', '--max-steps', str(max_steps),
                 '--project-review-every', str(every), '--history-high', str(history_high),
-                '--reasoning-loop-recovery', 'observe' if streaming else 'off', 'test'])
+                '--no-gui', '--reasoning-loop-recovery', 'observe' if streaming else 'off', 'test'])
             with patch('urllib.request.urlopen', side_effect=send), \
                  patch('pavlusha_agent.runtime.shutil.which', return_value='/fake/bwrap'), \
                  patch('pavlusha_agent.runtime.run_shell', side_effect=shell), \

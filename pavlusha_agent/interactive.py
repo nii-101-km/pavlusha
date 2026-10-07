@@ -45,7 +45,7 @@ class InteractiveSession:
 
     def __enter__(self):
         if not self.stream.isatty():
-            raise AgentError("--interactive requires terminal stdin; use ordinary mode for piped tasks")
+            raise AgentError("--interactive requires terminal stdin; use --no-interactive for piped tasks")
         self.fd = self.stream.fileno()
         self.original = termios.tcgetattr(self.fd)
         self.previous_handler = signal.getsignal(signal.SIGTSTP)
@@ -86,7 +86,7 @@ class InteractiveSession:
             return ""
         return data.decode(self.stream.encoding or "utf-8", errors="replace") + "\n"
 
-    def boundary(self, recent, *, force=False):
+    def boundary(self, recent, *, force=False, status=None, require_message=False):
         if not force and not self.requested:
             return False
         self.paused = True
@@ -95,11 +95,15 @@ class InteractiveSession:
         termios.tcflush(self.fd, termios.TCIFLUSH)
         termios.tcsetattr(self.fd, termios.TCSANOW, self.original)
         try:
-            self.renderer.chat_status("PAUSED — safe to type. Message + Enter; empty Enter resumes; /quit ends.")
-            line = self._readline()
-            if not line or line.strip() == '/quit':
-                raise SessionEnded()
-            text = line.rstrip('\r\n')
+            self.renderer.chat_status(status or "PAUSED — safe to type. Message + Enter; empty Enter resumes; /quit ends.")
+            while True:
+                line = self._readline()
+                if not line or line.strip() == '/quit':
+                    raise SessionEnded()
+                text = line.rstrip('\r\n')
+                if not require_message or text.strip():
+                    break
+                self.renderer.chat_status("NEED USER — provide new information; empty input keeps waiting. /quit ends.")
             if text.strip():
                 self.renderer.chat_message("USER", text)
                 recent.append({"role": "user", "content": "USER MESSAGE AT SAFE BOUNDARY:\n" + text},

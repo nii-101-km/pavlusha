@@ -1,10 +1,12 @@
 # Interactive chat and safe intervention (v0.3)
 
-Enable explicitly with `python agent.py --interactive --workdir ./agent-work "Your task"`.
+Enabled by default with `python agent.py --workdir ./agent-work "Your task"`.
+`--interactive` remains compatible; `--no-interactive` disables chat for batch/pipes.
 The existing model, network, GUI, Expert, GPU shell, Worker release and limit options apply.
-Interactive mode enables the existing append-only live renderer automatically. Without a
-positional task, the first safe input prompt collects it. Ordinary piped stdin is unchanged;
-`--interactive` requires terminal stdin and fails explicitly for a pipe rather than waiting.
+Live Worker output is also default-on; `--no-live` disables progress while retaining
+chat messages and pause controls. Without a positional task, the first safe input
+prompt collects it. Piped stdin uses `--no-interactive`; interactive mode requires
+terminal stdin and fails explicitly for a pipe rather than waiting.
 
 ## Controls and lifecycle
 
@@ -102,6 +104,20 @@ as semantic input, including text that happens to resemble markup. Standard NO_C
 still applies, and speaker labels remain distinguishable without color.
 
 ## Checkpoint and recovery behavior
+
+Confirmed lexical reasoning-loop exhaustion uses this same safe boundary with a
+distinct `NEED USER` status, after the configured `--max-reasoning-loop-recoveries`
+automatic retries. The stream is closed and interrupted actions are not executed.
+Existing checkpoint and working Project State validation must pass before waiting
+(a fresh, empty Project State before `project_init` is also permitted).
+Nonblank guidance enters History through `USER MESSAGE AT SAFE BOUNDARY`, resets
+only the lexical recovery counter, and continues the same TASK. Blank/whitespace
+input keeps waiting; `/quit` and EOF keep their existing exit behavior. With
+`--no-interactive`, exhaustion remains a bounded terminal failure, never a stdin wait.
+Provider failures, empty-output exhaustion, context-overflow exhaustion and
+integrity errors do not use this escalation path. `human_escalation` diagnostic
+events record exhaustion/resumption and attempt count, without storing user text
+or creating another durable state. `FINISH` remains terminal.
 
 Chat remains Recent History, not a second durable store. Before HIGH/reset or intentional Worker
 release the Worker is prompted to preserve durable requirements through existing Project State.

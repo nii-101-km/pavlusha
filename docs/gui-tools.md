@@ -12,7 +12,8 @@ logic are deliberately not imported.
 
 ## Boundary
 
-`--gui` creates one controller-owned 800x600 Xvfb display. The GUI application itself is launched
+GUI actions are enabled by default; `--no-gui` disables them and `--gui` remains
+compatible. `gui_start` creates one controller-owned 800x600 Xvfb display. The GUI application itself is launched
 inside Pavlusha's existing bubblewrap `/work` sandbox. Only that private X11 socket and its temporary
 Xauthority cookie are added to the sandbox. The host desktop is never selected as `DISPLAY`.
 
@@ -35,8 +36,11 @@ python3 -m venv .venv
 sudo apt-get install xvfb epiphany-browser dbus-daemon libglib2.0-bin
 ```
 
-The controller host needs `Xvfb`. `--gui` fails explicitly if Xvfb, `python-xlib`, or Pillow is
-unavailable. Python GUI dependencies stay in the controller `.venv`, separate from the OCR app `.venv`.
+The controller host needs `Xvfb`. If Xvfb, `python-xlib`, or Pillow is unavailable,
+the runtime reports `GUI unavailable` and omits GUI actions from the Worker prompt
+and response schema; shell/functions continue, including with explicit `--gui`.
+Viewer/browser launch failures retain the existing GUI error path. Python GUI
+dependencies stay in the controller `.venv`, separate from the OCR app `.venv`.
 
 For web interfaces Core exposes **`pavlusha-browser URL`** only in the GUI sandbox PATH.
 It uses fixed executables `/usr/bin/epiphany`, `/usr/bin/dbus-run-session`,
@@ -48,7 +52,7 @@ schemas also fail at launch. Ubuntu snap Firefox and `/lib/chatgpt` are not used
 {"action":"gui_start","command":"pavlusha-browser http://127.0.0.1:8000","network":true,"timeout":300,"delay":8}
 ```
 
-A web server started in a separate shell sandbox needs `network:true` and controller `--network`
+A web server started in a separate shell sandbox needs `network:true` and controller network permission
 so both share host loopback. With `network:false` the GUI has its own loopback: start the server
 and browser in the same `gui_start` command if network sharing is not granted.
 
@@ -61,11 +65,20 @@ host rejects its namespace creation; **Pavlusha's existing outer bubblewrap stil
 and all children**. The browser consequently has the same `/work` access/network authority as other
 Worker applications. These browser-specific settings do not affect ordinary shell or native GUI commands.
 
-Enable the tools with the ordinary agent command plus `--gui`:
+The ordinary agent command enables the tools when dependencies are available:
 
 ```bash
-.venv/bin/python agent.py --gui ... "task"
+.venv/bin/python agent.py ... "task"
 ```
+
+Use `--no-gui` for explicit opt-out in either interactive or non-interactive runs.
+Rendering a document only creates PDF/PNG artifacts. Open a rendered page using
+`gui_start` and a viewer, then use `view_gui` to attach a fresh screenshot to the
+next Worker request. An image-capable model/backend is required to interpret it;
+text-only backend errors retain the existing provider error path. No alternate
+vision model or OCR fallback is selected automatically. Checkpoints do not change
+GUI availability; a cold restart rechecks host dependencies and does not restore
+an old GUI session or screenshot.
 
 `gui_start.timeout` remains accepted/validated for compatibility but no longer limits session
 lifetime. The same private session persists across model turns, idle time, shell actions and
@@ -75,7 +88,7 @@ command shares and belongs to that sandbox; it is cleaned up with the browser. G
 ordinary shell-action process lifetime. `delay` is only a bounded settle wait; Xvfb startup and
 individual XTest/screenshot helpers still have their separate short deadlines.
 Network remains separately authorized: `gui_start` may use `network:true` only when the
-controller itself was started with `--network`.
+controller network permission is enabled (default; `--no-network` disables it).
 
 ## Worker contract
 
@@ -88,12 +101,38 @@ The minimal first transplant exposes:
 {"action":"right_click","x":400,"y":300,"delay":0.5}
 {"action":"drag","x1":100,"y1":100,"x2":500,"y2":300,"delay":0.5}
 {"action":"type_text","text":"hello","delay":0.5}
+{"action":"press_key","key":"l","modifiers":["ctrl"],"delay":0.5}
+{"action":"hold_key","key":"right","duration":0.5,"delay":0.5}
 {"action":"gui_close","delay":0.5}
 ```
 
 Coordinates are integer pixels inside 800x600. `delay` is a bounded 0..10 second post-action wait.
 `view_gui(delay=N)` is also the primitive for simply waiting and observing again; no semantic
 `wait_for_button`/`wait_for_page` layer exists.
+
+`type_text` still enters text. `press_key` generates physical key-down/key-up,
+with optional distinct `ctrl`, `shift`, `alt`, `super` modifiers (left-side keys,
+pressed in that order and released in reverse). `hold_key` holds one key for a
+finite `0 < duration <= 2` seconds; modifiers are not accepted for holds.
+Public key names are lowercase: `a`–`z`, `0`–`9`, `f1`–`f12`, `enter`,
+`escape`, `tab`, `space`, `backspace`, `delete`, `insert`, `home`, `end`,
+`page_up`, `page_down`, `left`, `right`, `up`, `down`. Unknown names, duplicate
+modifiers, extra fields and invalid durations fail closed.
+
+Physical names refer to US-QWERTY positions from the private server's XKB map;
+existing system libX11/XKB supplies these names. No keymap or layout is changed.
+For example `w` produces the physical W key even in a Russian layout. An
+application using translated symbols may still see `ц`; interpreting physical
+scancodes, repeats and held movement belongs to the application. A hold does
+not promise continuous movement in an application that reacts once per key-down.
+Missing XKB names produce a bounded GUI helper error, never text injection.
+
+The helper releases all possibly pressed keys in `finally`, including controlled
+signals and deadlines. Core retries release through a separate bounded helper
+after helper failure, timeout or controller interruption. If release cannot be
+confirmed, it closes that private display so no surviving session keeps the key
+down. Normal GUI session lifetime and mouse/text behavior are unchanged. Keyboard
+input uses the same fresh screenshot path with no mouse annotation.
 
 Each successful input action follows the same mechanical sequence:
 

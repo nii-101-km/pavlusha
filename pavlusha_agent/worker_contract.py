@@ -1,7 +1,7 @@
 """Generation schema for the existing Worker JSON actions; Core remains authoritative."""
 from __future__ import annotations
 
-from .gui import WIDTH, HEIGHT, MAX_DELAY, MAX_TEXT
+from .gui import WIDTH, HEIGHT, MAX_DELAY, MAX_TEXT, PHYSICAL_KEYS, MODIFIER_KEYS, MAX_HOLD_SECONDS
 from .project_state import WORK_STATUSES
 
 
@@ -16,7 +16,8 @@ def _variant(field, name, properties=None, required=()):
 
 def worker_response_format(*, initialized: bool, checkpoint_required: bool = False,
                            periodic_review: bool = False, gui_enabled: bool = False,
-                           expert_enabled: bool = False, interactive: bool = False) -> dict:
+                           expert_enabled: bool = False, interactive: bool = False,
+                           functions: list | None = None) -> dict:
     """Select canonical response shapes using the same phase gates as run_agent.
 
     Whitespace normalization, state IDs/transitions, byte limits, permissions and
@@ -74,6 +75,10 @@ def worker_response_format(*, initialized: bool, checkpoint_required: bool = Fal
         if expert_enabled:
             actions.append(_variant("action", "ask_expert", {"question": text, "context": string},
                                     ("question", "context")))
+        for function in functions or []:
+            actions.append(_variant("action", "call_function", {
+                "name": {"const": function["name"]}, "arguments": function["arguments"],
+            }, ("name", "arguments")))
         if gui_enabled:
             delay = {"type": ["number", "null"], "minimum": 0, "maximum": MAX_DELAY}
             x = {"type": "integer", "minimum": 0, "maximum": WIDTH - 1}
@@ -89,6 +94,15 @@ def worker_response_format(*, initialized: bool, checkpoint_required: bool = Fal
                 _variant("action", "type_text", {"text": {"type": "string", "maxLength": MAX_TEXT},
                                                   "delay": delay}, ("text",)),
                 _variant("action", "gui_close", {"delay": delay}),
+                _variant('action', 'press_key', {
+                    'key': {'enum': sorted(PHYSICAL_KEYS)},
+                    'modifiers': {'type': 'array', 'items': {'enum': list(MODIFIER_KEYS)},
+                                  'uniqueItems': True, 'maxItems': len(MODIFIER_KEYS)},
+                    'delay': delay}, ('key',)),
+                _variant('action', 'hold_key', {
+                    'key': {'enum': sorted(PHYSICAL_KEYS)},
+                    'duration': {'type': 'number', 'exclusiveMinimum': 0, 'maximum': MAX_HOLD_SECONDS},
+                    'delay': delay}, ('key', 'duration')),
             ])
     if interactive:
         actions.extend([_variant("action", name, {"text": text}, ("text",))

@@ -48,7 +48,8 @@ class ChronologicalReasoningProjectCheckpointTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             state_dir = Path(tmp) / "state"
-            argv = ["--workdir", tmp + "/work", "--state-dir", str(state_dir), "--model", "model",
+            argv = ["--no-interactive", "--no-live", "--no-network", "--project-map", "off",
+                    "--workdir", tmp + "/work", "--state-dir", str(state_dir), "--model", "model",
                     "--worker-context-budget", "40000", "--max-steps", "30",
                     "--project-review-every", "0", *extra, "task"]
             error = None

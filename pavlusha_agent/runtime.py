@@ -16,16 +16,18 @@ from .core import AgentError, ProviderTurn, _extract_json_object
 from .provider import ChatProvider, WorkerStreamInterrupted, ProviderContextOverflow
 from .reasoning_loop import ReasoningLoopDetector, RECOVERY_MESSAGE
 from .worker_contract import worker_response_format
+from .functions import FunctionRegistry
 from .experiment import ExperimentRecorder
 from .working_context import WorkingContext
 from .sandbox import admit_shell_result, run_shell, validate_action
 from .project_state import (context_notice_message, project_state_message, review_due,
-                            validate_project_action, handoff_message)
+                            validate_project_action, handoff_message, empty_project_state,
+                            validate_persisted_project_state)
 from .state_store import StateStore
 from .checkpoint import validate_checkpoint
 from .live import LiveConsoleRenderer
-from .project_map import ProjectMap
-from .gui import GUI_ACTIONS, GuiRuntime, validate_gui_action
+from .project_map import ProjectMap, PythonTreeSitterIndexer
+from .gui import GUI_ACTIONS, GuiError, GuiRuntime, validate_gui_action
 from .expert import Expert, EXPERT_PROMPT
 from .interactive import (InteractiveSession, SessionEnded, RestartWorkerTurn,
                           CHAT_PROMPT, validate_chat_action)
@@ -50,6 +52,16 @@ class PromptBudget:
     def telemetry(self) -> dict[str, object]:
         return {"measurement_source": "provider_usage" if self.measured is not None else "unknown",
                 "provider_prompt_tokens": self.measured, "context_capacity": self.capacity, "high": self.high}
+
+
+class ReasoningLoopRecoveryExhausted(AgentError):
+    """Only a confirmed lexical loop after the configured automatic retry ceiling."""
+    def __init__(self, attempts: int):
+        self.attempts = attempts
+        super().__init__(
+            f"Worker reasoning loop recovery exhausted after {attempts} consecutive "
+            "recovery attempts. Project state and workdir were preserved; "
+            "no action from the interrupted generations was executed.")
 
 
 def _worker_generation(
@@ -106,11 +118,7 @@ def _worker_generation(
                 step=step, mode=mode, signal=detector.confirmation.as_dict(),
                 recovery_attempt=recoveries, interrupted=True, turn=exc.turn, exhausted=exhausted)
             if exhausted:
-                raise AgentError(
-                    f"Worker reasoning loop recovery exhausted after {max_recoveries} consecutive "
-                    "recovery attempts. Project state and workdir were preserved; "
-                    "no action from the interrupted generations was executed."
-                ) from exc
+                raise ReasoningLoopRecoveryExhausted(recoveries) from exc
             recoveries += 1
             retry = True
             continue
@@ -169,6 +177,7 @@ def run_agent(args: argparse.Namespace) -> int:
 
 def _run_agent(args: argparse.Namespace, *, chat=None, interactive_live=None) -> int:
     expert = Expert(args) if getattr(args, "expert", "off") == "on" else None
+    functions = FunctionRegistry(args.functions) if getattr(args, "functions", None) else None
     if shutil.which("bwrap") is None:
         raise AgentError("bubblewrap is not installed (expected executable: bwrap)")
 
@@ -196,11 +205,15 @@ def _run_agent(args: argparse.Namespace, *, chat=None, interactive_live=None) ->
 
     store = StateStore(state_dir, task, reset=args.reset_state, cold_restart=True)
     experiment = ExperimentRecorder(state_dir, reset=args.reset_state)
-    project_map = (
-        ProjectMap(workdir, state_dir / "project_map.json", reset=args.reset_state)
-        if getattr(args, "project_map", "off") == "on"
-        else None
-    )
+    project_map = None
+    if getattr(args, "project_map", "off") == "on":
+        try:
+            map_indexer = PythonTreeSitterIndexer()
+        except AgentError as exc:
+            print("Project Map unavailable: " + str(exc)[:500], file=sys.stderr)
+        else:
+            project_map = ProjectMap(workdir, state_dir / "project_map.json",
+                                     reset=args.reset_state, indexer=map_indexer)
     if args.verbose:
         state = store.load()
         print(f"[state] file: {store.state_path}", file=sys.stderr)
@@ -224,6 +237,7 @@ def _run_agent(args: argparse.Namespace, *, chat=None, interactive_live=None) ->
             )
 
     budget = PromptBudget(args.worker_context_budget, args.max_tokens, args.history_context_high)
+    operation_label = "shell/function" if functions is not None else "shell"
 
     network_note = (
         "Network permission is granted for this run. Each shell or gui_start action must "
@@ -236,11 +250,23 @@ def _run_agent(args: argparse.Namespace, *, chat=None, interactive_live=None) ->
         "It is refreshed at checkpoints and may lag subsequent edits. It never overrides the filesystem."
         if project_map is not None else ""
     )
+    gui_runtime = None
+    if bool(getattr(args, "gui", False)):
+        try:
+            gui_runtime = GuiRuntime(
+                workdir, state_dir, max_command_timeout=args.command_timeout,
+                network_allowed=bool(args.network),
+            )
+        except GuiError as exc:
+            print("GUI unavailable: " + str(exc)[:500], file=sys.stderr)
+    gui_enabled = gui_runtime is not None
     system_message = {
         "role": "system",
-        "content": build_worker_system_prompt(gui_enabled=bool(getattr(args, "gui", False))) + "\n\n" + network_note + project_map_note + ("\n\n" + EXPERT_PROMPT if expert else "") + (CHAT_PROMPT if chat else ""),
+        "content": build_worker_system_prompt(gui_enabled=gui_enabled) + "\n\n" + network_note + project_map_note + ("\n\n" + EXPERT_PROMPT if expert else "") + (CHAT_PROMPT if chat else ""),
     }
     task_message = {"role": "user", "content": "TASK:\n" + task}
+    if functions is not None:
+        system_message["content"] += functions.prompt()
 
     recent = WorkingContext()
     project_state = store.get_project_state()
@@ -252,7 +278,7 @@ def _run_agent(args: argparse.Namespace, *, chat=None, interactive_live=None) ->
     invalid_replies = 0
     consecutive_reasoning_recoveries = 0
     consecutive_loop_recoveries = 0
-    live = interactive_live or (LiveConsoleRenderer() if getattr(args, "live", False) else None)
+    live = (interactive_live or LiveConsoleRenderer()) if getattr(args, "live", False) else None
     if live is not None:
         expert_status = ("off" if expert is None else
                          "enabled · network not granted" if not expert.network else
@@ -260,18 +286,11 @@ def _run_agent(args: argparse.Namespace, *, chat=None, interactive_live=None) ->
         live.start(model=provider.resolve_model(), task=task, max_steps=args.max_steps,
                    context=args.worker_context_budget, expert_status=expert_status)
 
-    gui_runtime = (
-        GuiRuntime(
-            workdir, state_dir, max_command_timeout=args.command_timeout,
-            network_allowed=bool(args.network),
-        )
-        if bool(getattr(args, "gui", False)) else None
-    )
     gui_observation: dict[str, object] | None = None
     overflow_recovered_generations: set[str] = set()
 
     if chat is not None and args.task:
-        live.chat_message("USER", task)
+        chat.renderer.chat_message("USER", task)
 
     with (gui_runtime if gui_runtime is not None else nullcontext()):
         for step in itertools.count(1):
@@ -296,7 +315,7 @@ def _run_agent(args: argparse.Namespace, *, chat=None, interactive_live=None) ->
             periodic_prompt = None
             if review_due(project_state, operation_count=operation_count, every=args.project_review_every):
                 periodic_prompt = {"role": "user", "content": (
-                    f"PERIODIC PROJECT STATE REVIEW\n{args.project_review_every} shell operations completed since the last review.\n"
+                    f"PERIODIC PROJECT STATE REVIEW\n{args.project_review_every} {operation_label} operations completed since the last review.\n"
                     "This is an attention questionnaire, NOT a history checkpoint. Normal shell/finish actions are temporarily unavailable for this one review turn. "
                     "If durable DESIGN/WORK/DEVIATION information changed, record it with project_update. "
                     "If nothing durable needs recording, call project_review_skip. Do not call project_review_complete."
@@ -371,11 +390,33 @@ def _run_agent(args: argparse.Namespace, *, chat=None, interactive_live=None) ->
                     response_format=worker_response_format(
                         initialized=bool(project_state.get("initialized")),
                         checkpoint_required=bool(checkpoint_reason), periodic_review=periodic_review_due,
-                        gui_enabled=bool(getattr(args, "gui", False)), expert_enabled=expert is not None, interactive=chat is not None,
+                        gui_enabled=gui_enabled, expert_enabled=expert is not None, interactive=chat is not None,
+                        functions=functions.descriptions if functions is not None else None,
                     ), before_generation=before_generation if chat is not None else None,
                     reasoning_effort=getattr(args, "reasoning_effort", None),
                 )
             except RestartWorkerTurn:
+                continue
+            except ReasoningLoopRecoveryExhausted as exc:
+                if chat is None:
+                    raise AgentError(str(exc) + " Human escalation is unavailable in non-interactive mode.") from exc
+                # Never convert an integrity failure into permission to continue.
+                current = store.load()
+                current_project = current['project_state']
+                if current_project.get('initialized'):
+                    validate_checkpoint(current, task)
+                    validate_persisted_project_state(current_project)
+                elif current_project != empty_project_state() or current.get('recovery_checkpoint') is not None:
+                    raise AgentError("invalid uninitialized Project State at reasoning-loop escalation")
+                experiment.record_human_escalation(step=step, attempts=exc.attempts, resumed=False)
+                chat.boundary(recent, force=True, require_message=True, status=(
+                    f"NEED USER — reasoning-loop recovery exhausted after {exc.attempts} attempts.\n"
+                    "The same TASK remains active; committed state and /work are preserved.\n"
+                    "Safe to type: provide new information or guidance; /quit ends."))
+                # boundary returns only after genuine nonblank intervention, through
+                # the existing chronological user_message path. No checkpoint/reset.
+                consecutive_loop_recoveries = 0
+                experiment.record_human_escalation(step=step, attempts=exc.attempts, resumed=True)
                 continue
             except ProviderContextOverflow as exc:
                 if interactive_evidence:
@@ -473,18 +514,20 @@ def _run_agent(args: argparse.Namespace, *, chat=None, interactive_live=None) ->
                     if chat is None:
                         raise AgentError("chat actions require --interactive")
                     kind, data = validate_chat_action(action)
+                elif requested_kind == "call_function" and functions is not None:
+                    kind, data = "call_function", action
                 elif requested_kind == "ask_expert" and expert is not None:
                     kind, data = "ask_expert", {"question": action.get("question"), "context": action.get("context")}
                 elif requested_kind in {"project_init", "project_update", "project_review_skip", "project_review_complete"}:
                     kind, data = validate_project_action(action)
                 elif requested_kind in GUI_ACTIONS:
-                    if not bool(getattr(args, "gui", False)):
+                    if not gui_enabled:
                         raise AgentError(
-                            f"GUI action {requested_kind!r} requires the controller to be started with --gui"
+                            f"GUI action {requested_kind!r} is unavailable: --no-gui or missing GUI dependencies"
                         )
                     kind, data = validate_gui_action(action, args.command_timeout)
                 else:
-                    if bool(getattr(args, "gui", False)) and requested_kind not in {
+                    if gui_enabled and requested_kind not in {
                         "shell", "finish", "drop_context", "compact_context"
                     }:
                         allowed_gui = ", ".join(sorted(GUI_ACTIONS))
@@ -529,7 +572,7 @@ def _run_agent(args: argparse.Namespace, *, chat=None, interactive_live=None) ->
             if project_state.get("initialized") and periodic_review_due and kind not in {"project_update", "project_review_skip", "message", "wait_for_user"}:
                 recent.append({"role": "assistant", "content": json.dumps(action, ensure_ascii=False)})
                 recent.append({"role": "user", "content": (
-                    f"PERIODIC PROJECT STATE REVIEW: {args.project_review_every} shell operations completed. "
+                    f"PERIODIC PROJECT STATE REVIEW: {args.project_review_every} {operation_label} operations completed. "
                     "If durable DESIGN/WORK/DEVIATION information changed, record it now with project_update. "
                     "Otherwise call project_review_skip. This is not a history checkpoint; project_review_complete is unavailable here."
                 )})
@@ -552,7 +595,7 @@ def _run_agent(args: argparse.Namespace, *, chat=None, interactive_live=None) ->
             if live is not None:
                 live.action(kind, data)
             if kind in {"message", "wait_for_user"}:
-                live.chat_message("P.A.V.L.U.S.H.A.", data["text"])
+                chat.renderer.chat_message("P.A.V.L.U.S.H.A.", data["text"])
                 # Like every other action, close the assistant action with factual tool evidence.
                 # Ending the prompt on assistant can be interpreted as assistant-prefill/EOS.
                 recent.append({"role": "user", "content": "MESSAGE RESULT: user-facing text displayed."},
@@ -654,6 +697,26 @@ def _run_agent(args: argparse.Namespace, *, chat=None, interactive_live=None) ->
                     )
                 continue
 
+            if kind == "call_function":
+                result_payload = functions.call(data, args.output_limit)
+                # Use the existing factual ledger format; do not serialize Python state.
+                ledger_payload = {
+                    "command": "call_function " + (result_payload["name"] or "<invalid>"),
+                    "stdout": json.dumps(result_payload, ensure_ascii=False),
+                    "error": result_payload.get("error", ""),
+                    "output_withheld": result_payload.get("output_withheld", False),
+                    "output_limit_chars": result_payload.get("output_limit_chars"),
+                }
+                op_record = store.record_operation(ledger_payload)
+                experiment.record_operation_telemetry(step=step, op_id=op_record["id"], result=ledger_payload)
+                if live is not None:
+                    live.function_result(op_record["id"], result_payload)
+                recent.append({"role": "user", "content": f"FUNCTION RESULT ({op_record['id']}):\n" +
+                               json.dumps(result_payload, ensure_ascii=False)},
+                              kind="function_result", op_id=op_record["id"])
+                consecutive_loop_recoveries = 0
+                continue
+
             if kind == "ask_expert":
                 def expert_telemetry(event):
                     experiment.record_expert_call(step=step, event=event)
@@ -696,7 +759,7 @@ def _run_agent(args: argparse.Namespace, *, chat=None, interactive_live=None) ->
                     continue
                 store.mark_finished(data["summary"])
                 if chat is not None:
-                    live.chat_message("P.A.V.L.U.S.H.A.", data["summary"])
+                    chat.renderer.chat_message("P.A.V.L.U.S.H.A.", data["summary"])
                 elif live is not None:
                     live.complete(data["summary"])
                 else:

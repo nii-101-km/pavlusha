@@ -222,6 +222,7 @@ def run_case(
     cmd = [
         sys.executable,
         str(ROOT / "agent.py"),
+        "--no-interactive",
         task_path.read_text(encoding="utf-8").strip(),
         "--workdir", str(work),
         "--state-dir", str(state),

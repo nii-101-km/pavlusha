@@ -49,7 +49,7 @@ class CheckpointSnapshotTests(unittest.TestCase):
             root = Path(tmp); work = root/'work'; work.mkdir()
             if setup:
                 setup(work)
-            args = build_parser().parse_args([
+            args = build_parser().parse_args(['--no-interactive', '--no-live', '--no-network', '--project-map', 'off',
                 '--workdir', str(work), '--state-dir', str(root/'state'),
                 '--worker-context-budget', '30000', '--model', 'fake',
                 '--project-review-every', '0', '--max-steps', str(len(turns)), *extra, 'task'])
@@ -86,7 +86,7 @@ class CheckpointSnapshotTests(unittest.TestCase):
             turn({'action': 'shell', 'command': 'after reset'}),
             done('after reset'),
             turn({'action': 'finish', 'summary': 'done'}),
-        ], extra=['--project-map', 'on', '--history-high', '3'], setup=setup, edit=edit)
+        ], extra=['--no-gui', '--project-map', 'on', '--history-high', '3'], setup=setup, edit=edit)
 
         def snapshots(request):
             return json.dumps([layer(request, 'PROJECT MAP'), layer(request, 'PROJECT STATE')],

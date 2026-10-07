@@ -17,13 +17,18 @@ Schema selection follows the existing runtime gates in their priority order:
 | Project State uninitialized | `project_init` |
 | Required history checkpoint | `project_update`, `project_review_complete` |
 | Periodic Project State review | `project_update`, `project_review_skip` |
-| Ordinary execution | `shell`, `finish`, `project_update`; GUI actions when `--gui` is enabled; `ask_expert` when Expert is enabled |
+| Ordinary execution | `shell`, `finish`, `project_update`; GUI actions by default when dependencies are available (`--no-gui` disables); `ask_expert` when Expert is enabled; `call_function` variants when `--functions` is supplied |
 
 GUI variants are `gui_start`, `view_gui`, `click`, `right_click`, `drag`,
-`type_text`, and `gui_close`. Legacy `drop_context` and `compact_context` are not
+`type_text`, `press_key`, `hold_key`, and `gui_close`. Legacy `drop_context` and `compact_context` are not
 enabled by the active runtime and are not advertised in generation schemas.
 `project_init` is not available after initialization; review-only replies are not
 available during ordinary execution.
+
+Custom function variants fix both `action` and the registered `name`, and derive
+the `arguments` schema from the Python declaration. Core validates again before
+execution; call contract errors become normal factual observations. See
+[custom functions](custom-functions.md) for types, trust and recovery semantics.
 
 Each action has its own object branch with a fixed `action`, its required payload
 fields and no additional properties. Project updates similarly have separate

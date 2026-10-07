@@ -40,7 +40,7 @@ def main():
             if len(calls) == 1:
                 messages = messages + [{'role':'user','content':' x'*180000}]
             return original(provider, messages, reasoning_effort='low', **kwargs)
-        args = build_parser().parse_args(['--workdir',str(work),'--state-dir',str(root/'state'),
+        args = build_parser().parse_args(['--no-interactive','--workdir',str(work),'--state-dir',str(root/'state'),
             '--model','qwen/qwen3.8-27b','--worker-context-budget','117248','--max-tokens','8000',
             '--project-map','on','--live','--max-steps','4',task])
         with patch.object(ChatProvider,'worker_completion',send), redirect_stdout(output), redirect_stderr(output):
@@ -59,6 +59,7 @@ def main():
                   'context':117248,'max_tokens':8000,'checkpoint_unchanged':True,'work_preserved':True,
                   'live_output':output.getvalue()}
     destination = Path('context-guard-results/real-overflow-recovery.json')
+    destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(json.dumps(report,ensure_ascii=False,indent=2)+'\n')
     print(output.getvalue())
     print('PASS:',destination.resolve())

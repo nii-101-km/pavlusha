@@ -768,11 +768,12 @@ if __name__ == "__main__":
     unittest.main()
 
 class LiveModeTests(unittest.TestCase):
-    def test_parser_exposes_live_without_changing_default(self):
+    def test_parser_exposes_live_default_and_opt_out(self):
         args = agent.build_parser().parse_args(["task"])
-        self.assertFalse(args.live)
+        self.assertTrue(args.live)
         args = agent.build_parser().parse_args(["--live", "task"])
         self.assertTrue(args.live)
+        self.assertFalse(agent.build_parser().parse_args(["--no-live", "task"]).live)
 
     def test_streaming_provider_reconstructs_turn_and_emits_deltas(self):
         import io

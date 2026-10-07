@@ -30,6 +30,13 @@ def png_fixture() -> bytes:
 
 
 class GuiValidationTests(unittest.TestCase):
+    def test_cli_gui_default_and_explicit_modes(self):
+        from pavlusha_agent.cli import build_parser
+        for interactive in ([], ['--interactive']):
+            for flags, expected in (([], True), (['--gui'], True), (['--no-gui'], False)):
+                with self.subTest(interactive=interactive, flags=flags):
+                    self.assertEqual(build_parser().parse_args([*interactive, *flags, 'task']).gui, expected)
+
     def test_public_shapes_and_delay_defaults(self):
         kind, data = validate_gui_action({"action": "click", "x": 10, "y": 20}, 300)
         self.assertEqual(kind, "click")
@@ -427,6 +434,46 @@ class GuiPromptBudgetTests(unittest.TestCase):
 
 
 class RuntimeGuiIntegrationTests(unittest.TestCase):
+    def test_default_and_opt_out_contract_survive_checkpoint(self):
+        import json
+        from unittest.mock import patch
+        from tests.test_checkpoint_snapshots import CheckpointSnapshotTests, done
+        from tests.test_reasoning_window import init_turn, turn
+        for flags, enabled in (([], True), (['--gui'], True), (['--no-gui'], False)):
+            with self.subTest(flags=flags), patch('pavlusha_agent.gui.ensure_gui_dependencies'):
+                helper = CheckpointSnapshotTests()
+                seen, _, _ = helper.run_case([
+                    init_turn(), turn({'action':'shell','command':'verify'}),
+                    turn({'action':'project_review_complete','handoff':'continue'}),
+                    done('verified'), turn({'action':'finish','summary':'done'}),
+                ], extra=[*flags, '--history-high','2'])
+                for index in (1, 3):
+                    contract = json.dumps(helper.request_formats[index])
+                    self.assertEqual('gui_start' in contract, enabled)
+                    self.assertEqual('view_gui' in contract, enabled)
+                self.assertEqual('"action":"gui_start"' in seen[1][0]['content'], enabled)
+
+    def test_missing_dependencies_preserve_shell_and_functions(self):
+        from unittest.mock import patch
+        from tests.test_runtime_lifecycle import run_script
+        from tests.test_reasoning_window import init_turn, turn
+        from tests.test_checkpoint_snapshots import done
+        for error in ('--gui requires Xvfb on the controller host',
+                      '--gui requires python-xlib and Pillow in the controller environment'):
+            with self.subTest(error=error), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                module = root / 'functions.py'
+                module.write_text('def value() -> int:\n    return 42\n')
+                with patch('pavlusha_agent.gui.ensure_gui_dependencies', side_effect=GuiError(error)):
+                    seen, result, failure = run_script(root, [init_turn(),
+                        turn({'action':'call_function','name':'value','arguments':{}}),
+                        turn({'action':'shell','command':'verify'}), done('verified'),
+                        turn({'action':'finish','summary':'done'})], extra=['--functions',str(module)])
+                self.assertEqual(result, 0, failure)
+                self.assertNotIn('"action":"gui_start"', seen[1][0]['content'])
+                self.assertIn('42', str(seen[2]))
+                self.assertIn('SHELL RESULT', str(seen[3]))
+
     def test_worker_sees_one_fresh_transient_image_and_gesture_label(self):
         import copy
         import json
@@ -486,10 +533,10 @@ class RuntimeGuiIntegrationTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            args = build_parser().parse_args([
+            args = build_parser().parse_args(['--no-interactive', '--no-live', '--no-network', '--project-map', 'off',
                 "--workdir", str(root / "work"), "--state-dir", str(root / "state"),
                 "--model", "fake", "--worker-context-budget", "40000", "--max-tokens", "1024",
-                "--project-review-every", "0", "--max-steps", "6", "--gui", "task",
+                "--project-review-every", "0", "--max-steps", "6", "task",
             ])
             with patch("pavlusha_agent.runtime.shutil.which", return_value="/fake/bwrap"), \
                  patch("pavlusha_agent.runtime.GuiRuntime", FakeGuiRuntime), \
@@ -556,7 +603,7 @@ class RuntimeGuiIntegrationTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            args = build_parser().parse_args([
+            args = build_parser().parse_args(['--no-interactive', '--no-live', '--no-network', '--project-map', 'off',
                 "--workdir", str(root / "work"), "--state-dir", str(root / "state"),
                 "--model", "fake", "--worker-context-budget", "40000", "--max-tokens", "1024",
                 "--project-review-every", "0", "--max-steps", "5", "--gui", "task",

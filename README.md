@@ -7,9 +7,11 @@
 Persistent Autonomous Verification & Local Utility
 Shell-Handling Agent
 
+Version **0.4.0**.
+
 P.A.V.L.U.S.H.A. is a deliberately small local agent runtime. One Worker model
-chooses actions; the Core/controller validates runtime invariants, executes those
-actions in Linux bubblewrap, and maintains durable Project State. The Worker uses
+chooses actions; the Core/controller validates runtime invariants, executes
+shell/GUI actions in Linux bubblewrap, and maintains durable Project State. The Worker uses
 an OpenAI-compatible endpoint; LM Studio is the documented local provider.
 
 ## What it does
@@ -17,13 +19,16 @@ an OpenAI-compatible endpoint; LM Studio is the documented local provider.
 - Executes Worker-selected shell operations against a persistent work directory.
 - Maintains a project plan, navigation snapshots and chronological action history.
 - Commits recovery checkpoints and supports bounded context/reasoning-loop recovery.
-- Optionally operates a private GUI and asks one text-only Expert for advice.
+- Operates a private GUI when its host dependencies are available.
+- Optionally loads trusted Python functions, including DOCX/XLSX packs, and asks
+  one text-only Expert for advice.
 - Presents progress through an append-only `--live` terminal log.
 
 ## Architecture
 
 ```text
-Local Worker -> selected action -> Core/controller -> shell / optional GUI
+Local Worker -> selected action -> Core/controller -> shell / private GUI
+                                  |              -> optional trusted functions
                                   |              -> optional Expert advice
                                   +-> Project State, Map, History and checkpoints
 ```
@@ -32,6 +37,8 @@ Local Worker -> selected action -> Core/controller -> shell / optional GUI
 structure and transitions, not whether Worker-selected evidence proves a claim.
 **Project Map** is a deterministic navigation snapshot of Python symbols/ranges.
 **Recent History** retains reasoning → action → result after the checkpoint.
+Work files hold the actual deliverables; Project State holds concise decisions,
+status and evidence pointers, not full artifacts or reasoning transcripts.
 The prompt is immutable SYSTEM/TASK → frozen MAP/STATE → optional HANDOFF → HISTORY;
 the operation ledger and exact history archives remain outside the prompt.
 There is no active State Manager, semantic compactor or separate RAW reasoning buffer.
@@ -40,11 +47,13 @@ There is no active State Manager, semantic compactor or separate RAW reasoning b
 
 Use Linux, Python 3.12 as the documented tested environment, and a running Worker
 provider with a loaded model that follows structured actions. GUI observations
-require an image-capable Worker. All Python dependencies are in `requirements.txt`:
+require an image-capable Worker. Core Python dependencies are in `requirements.txt`:
 Tree-sitter/Python grammar, Rich, python-xlib and Pillow, with declared version ranges.
+Office packs have separate optional dependencies described below.
 
 **System dependencies:** `bubblewrap` (`bwrap`); GUI additionally needs `Xvfb`.
-The browser helper requires `epiphany-browser`, `dbus-daemon` (including
+Physical keyboard input also requires host libX11/XKB. The browser helper requires
+`epiphany-browser`, `dbus-daemon` (including
 `dbus-run-session`) and `libglib2.0-bin` on Debian/Ubuntu. These are host packages,
 not pip dependencies. Expert needs no additional Python SDK.
 
@@ -69,16 +78,11 @@ python agent.py \
   --workdir "$project_dir" \
   --state-dir "${project_dir}.pavlusha-state/task-001" \
   --model qwen/qwen3.8-27b \
-  --worker-context-budget 117248 --max-tokens 8192 --max-steps -1 \
-  --project-map on --history-context-high 0.85 --history-high 30 \
-  --project-review-every 10 --command-timeout 300 \
-  --reasoning-effort low \
-  --interactive --live \
   "Inspect this project, run its existing tests, and report concrete failures."
 ```
 
-Match the model and context budget to your loaded model; omit `--worker-context-budget`
-for LM Studio's automatic context discovery. Effort values are provider-defined;
+Match `--model` to your loaded model. LM Studio's context capacity is discovered
+automatically; use `--worker-context-budget N` to override it. Effort values are provider-defined;
 omit `--reasoning-effort` to retain its default. The State directory must remain outside
 `--workdir`. Use a separate State directory for each new TASK; retain it and the same TASK
 text when recovering an interrupted run.
@@ -88,8 +92,13 @@ Interactive communication/intervention is available while it is active: press **
 wait for **PAUSED — safe to type**, then enter a message or press empty Enter to resume.
 Accepted **FINISH terminates the runtime** in both modes.
 
-Network access is opt-in: add `--network` only when the task needs it, such as downloading
-missing dependencies. It is intentionally omitted from the generic example.
+Live output, network permission, Project Map and interactive mode are enabled by
+default, alongside GUI and lexical reasoning-loop recovery. Use `--no-live`,
+`--no-network`, `--project-map off` or `--no-interactive` to opt out. Networked
+shell/GUI actions must still request `network:true`. Functions and Expert remain opt-in.
+Default interactive mode requires terminal stdin; use `--no-interactive` for pipes/batch.
+Unavailable Project Map dependencies produce a diagnostic and leave the runtime usable
+without a map. The default step limit is unlimited (`--max-steps -1`).
 
 The default Worker endpoint is `http://127.0.0.1:1234/v1`. Select a loaded model with
 `--model` or `AGENT_MODEL`; otherwise the provider is queried for models.
@@ -102,23 +111,64 @@ Set credentials in the controller environment, without committing their values.
 | Control | Meaning |
 | --- | --- |
 | `--workdir PATH` / `--state-dir PATH` | Persistent work files / separate controller State. Default State: `<workdir>.pavlusha-state`. |
-| `--interactive` | Communication and safe intervention within one active TASK; FINISH terminates the runtime. |
+| `--interactive` / `--no-interactive` | Default-on communication and safe intervention within one active TASK; FINISH terminates the runtime. |
 | `--reasoning-effort STRING` | Worker provider passthrough; omitted by default. |
+| `--functions MODULE.py` | Repeatable: trusted local Python modules with globally unique function names; synchronous and not sandboxed. See [custom functions](docs/custom-functions.md). |
 | `--worker-context-budget N` | Override context capacity; omission discovers the loaded LM Studio context length. |
-| `--project-map on` | Frozen checkpoint navigation snapshot; ordinary steps do not refresh it. |
-| `--project-review-every 10` | Periodic review after executed shell operations; `0` disables it. |
-| `--history-high 30` | Request a fresh HIGH checkpoint at 30 retained Worker steps. |
+| `--project-map on` | Default frozen checkpoint navigation snapshot; `off` disables; ordinary steps do not refresh it. |
+| `--project-review-every 10` | Periodic review after executed shell/function operations; `0` disables it. |
+| `--history-high 200` | Request a fresh HIGH checkpoint at 200 retained Worker steps; the existing context trigger can fire earlier. |
 | `--history-context-high 0.85` | Request HIGH when the last successful provider prompt usage reaches this fraction of context capacity. |
-| `--max-steps 60` | Step watchdog; `-1` allows unlimited Worker turns. |
+| `--max-steps -1` | Default unlimited Worker turns; a positive value enables the existing step watchdog. |
 | `--max-tokens 8192` | Worker completion ceiling, including reasoning. |
 | `--command-timeout 300` | Maximum seconds per shell command; Worker-selected timeouts are clamped to this ceiling. |
-| `--output-limit 24000` | Hard stdout/stderr admission limit. |
-| `--network`, `--gui`, `--live` | Enable network permission, private GUI tools and terminal presentation. |
+| `--output-limit 24000` | Hard shell-output and serialized function-result admission limit, in characters. |
+| `--no-network`, `--no-gui`, `--no-live` | Disable default network permission, private GUI tools or Worker progress output. Positive flags remain compatible. |
 
 `--history-window`, `--raw-reasoning-limit`/`--worker-reasoning-attractor-tokens`,
 and legacy State Manager/semantic-compaction/self-context-maintenance switches are
 compatibility no-ops in the active loop. There is no active partial LOW history cut;
 `--history-low` is unsupported. See `--help` for the accepted CLI surface.
+
+## Optional document packs
+
+The [DOCX pack](docs/docx-functions.md) provides structure inspection, compact
+paginated reading, exact text replacements preserving runs, and PDF/PNG rendering.
+It represents supported Word equations (OMML) as text and flags incomplete
+representations; it is not a formula editor or universal document reader.
+The [XLSX pack](docs/xlsx-functions.md) provides sheet/layout inspection,
+bounded range reading, point edits, and LibreOffice recalculation/print rendering.
+Formula text and cached values are distinct; caches may be missing or stale.
+`openpyxl` does not calculate formulas.
+
+Install only the optional dependencies you need in the controller environment:
+
+```bash
+pip install -r tools/requirements-docx.txt
+pip install -r tools/requirements-xlsx.txt
+# Additionally, for XLSX rendering:
+pip install -r tools/requirements-xlsx-render.txt
+```
+
+DOCX reading/editing uses `lxml`; its requirements file also includes fixture/helper
+dependencies. XLSX reading/editing uses `openpyxl` and `lxml`. Standard rendering
+needs host LibreOffice (`soffice`), Poppler (`pdfinfo`, `pdftoppm`) and suitable fonts.
+DOCX rendering works without manual renderer configuration. LibreOffice is optional
+for the runtime and for both packs' reading/editing; nothing is installed automatically.
+
+Place input documents in `document-work`, then load either or both packs:
+
+```bash
+python agent.py --workdir ./document-work \
+  --functions tools/docx_functions.py \
+  --functions tools/xlsx_functions.py \
+  "Inspect report.docx and figures.xlsx; prepare amended copies and verify them."
+```
+
+Both packs use `--workdir` as their only document root, reject absolute paths,
+`..` and symlink escapes, and bind reads/edits to source revisions. Edits produce
+new files without overwriting the source. Semantic decisions and visual evaluation
+remain with Worker. Rendering creates files, not an automatic visual observation.
 
 ## Safety and private data
 
@@ -127,7 +177,14 @@ Use a dedicated directory and review the task, model and environment. Bubblewrap
 isolation depends on host namespace policy and mounts; it is **not an absolute
 security boundary**. The self-test checks basic local assumptions, not every escape.
 
-`--network` allows requested network operations and shares the host network, including
+Custom function modules execute trusted Python with controller permissions and
+host filesystem, environment and network access; they are **not sandboxed** by
+bubblewrap or `--no-network`. Keep modules outside the Worker-writable workdir.
+Calls are synchronous with no generic timeout/cancellation or exactly-once guarantee;
+`--command-timeout` does not bound them. Pack path checks are not a sandbox against
+malicious code or concurrent filesystem races. See [custom functions](docs/custom-functions.md).
+
+Default network permission (`--no-network` disables it) allows requested network operations and shares the host network, including
 loopback services; shell/GUI actions must still request `network=true`. Networked
 shell commands resolve `/etc/resolv.conf` anew and mount its target read-only when
 it is a symlink, without exposing host `/run`/sockets or writing resolver copies
@@ -140,12 +197,25 @@ task material; default ignore rules do not cover arbitrary custom output paths.
 The GUI browser disables WebKit's nested sandbox and relies on outer bubblewrap.
 Expert sends selected text to its configured API and may incur provider charges.
 
-## Optional GUI
+## Private GUI
 
-`--gui` enables a private 800×600 Xvfb display without exposing the host desktop.
-The application runs in the same bubblewrap work environment. Coordinate actions
-include view, click, right-click, drag and literal text input. Screenshots are
+GUI actions are enabled by default when Xvfb, python-xlib and Pillow are available.
+`--no-gui` disables them; `--gui` remains accepted. Missing prerequisites disable
+GUI with a diagnostic while shell/functions continue. The private 800×600 Xvfb
+display starts when `gui_start` is used, without exposing the host desktop.
+The application runs in the same bubblewrap work environment. Actions include
+`gui_start`, `view_gui`, `click`, `right_click`, `drag`, `type_text`, `press_key`,
+`hold_key` and `gui_close`. Each successful input action waits its selected delay
+and supplies a fresh screenshot for the next Worker request. Screenshots are
 transient observations; mouse markers show executed gestures, not semantic success.
+
+`type_text` enters literal printable text. `press_key` taps a supported physical
+key, optionally with `ctrl`/`shift`/`alt`/`super`; `hold_key` holds one key for
+`0 < duration <= 2` seconds. Keys are US-QWERTY physical positions from the private
+XKB map, without changing layout. Applications using translated symbols can still
+interpret W as `ц`; a hold does not guarantee repeated movement. Cleanup releases
+keys after completion and controlled errors; Core retries release after helper
+failure and closes the private display if release cannot be confirmed.
 
 Keep the main GUI command in the foreground. Its session and any server started
 inside that command persist across idle/model/shell/review turns until `gui_close`
@@ -153,10 +223,14 @@ or controller termination/recovery. `gui_start.timeout` is a compatibility no-op
 GUI does not extend ordinary shell process lifetime or count as shell operations.
 See [GUI tools](docs/gui-tools.md) for actions, delays, annotation and cleanup.
 
+Document rendering creates PDF/PNG files. GUI opens those files in a viewer;
+`view_gui` sends a screenshot to Worker. Understanding that screenshot requires
+an image-capable Worker/backend. Rendering alone does not provide visual evidence.
+
 ## Optional Expert
 
 Expert is optional and off by default: one independent text-only consultant, not
-another autonomous Worker. Enable it with an explicit endpoint/model and `--network`
+another autonomous Worker. Enable it with an explicit endpoint/model and network permission
 (even for local endpoints). Calls may incur provider charges.
 
 ```bash
@@ -231,22 +305,28 @@ provider/transport errors propagate. Work files remain current.
 
 ### Reasoning-loop observation and recovery
 
-`--reasoning-loop-recovery off|observe|recover` defaults to `off`. Observation and
+`--reasoning-loop-recovery off|observe|recover` defaults to `recover` in both
+interactive and non-interactive runs. Explicit `off` disables detection. Observation and
 recovery use deterministic lexical detection; `observe` does not interrupt the Worker.
 `recover` interrupts a confirmed loop and retries the exact pre-loop request
 plus one temporary instruction. Interrupted reasoning stays only in diagnostics,
 not History/State/handoff; length or lack of an action alone does not trigger detection.
 
 `--max-reasoning-loop-recoveries 3` bounds retries; another loop on the last retry
-stops Core with State/work intact. Accepted runtime actions reset the consecutive
-counter; invalid/rejected actions do not. Retries stay inside the same step without
+enters `NEED USER` in interactive mode, through the existing safe input boundary.
+Only nonblank user guidance resumes the same TASK and resets this recovery counter;
+empty input keeps waiting, and `/quit` or EOF ends the session. State/work remain intact.
+With `--no-interactive`, exhaustion stops with a bounded error explaining that human
+escalation is unavailable. Checkpoint/State integrity failures still fail closed.
+Accepted runtime actions reset the consecutive counter; invalid/rejected actions do not.
+Retries stay inside the same step without
 rerunning review/Map preparation. Detection needs `reasoning_content` SSE deltas;
 buffered providers delay detection. Closing the response does not acknowledge
 cancellation of server computation.
 
 ## Live terminal output
 
-`--live` is an append-only Rich-based log on **stderr**, without an alternate screen,
+Default live output (`--no-live` disables Worker progress) is an append-only Rich-based log on **stderr**, without an alternate screen,
 widgets or interaction. Commands/headings are bold; shell/State cyan, Expert/GUI
 magenta, success green, warnings yellow, errors red, reasoning/metadata subdued.
 Rich renders Markdown for COMPLETE summaries and Expert answers only; reasoning,
@@ -274,7 +354,11 @@ Install `requirements-test.txt` first (controller dependencies plus the independ
 JSON Schema validator used by contract tests). Ordinary provider tests use scripted replies,
 without paid API calls. Browser/network integration tests are opt-in through
 `PAVLUSHA_TEST_GUI_BROWSER=1` / `PAVLUSHA_LIVE_NETWORK=1`; real Xvfb capture runs
-when available. OCR smoke tools require a separately supplied OCR application;
+and physical-key tests run when their host tools are available. Office tests may
+skip without optional dependencies; real render tests use
+`PAVLUSHA_TEST_REAL_RENDER=1` / `PAVLUSHA_TEST_REAL_XLSX_RENDER=1` with the corresponding
+`tests.test_docx_pack` / `tests.test_xlsx_pack` modules and system tools installed.
+OCR smoke tools require a separately supplied OCR application;
 local benchmark runs, OCR outputs and downloaded models are not distributed here.
 
 ## Documentation
@@ -283,20 +367,23 @@ local benchmark runs, OCR outputs and downloaded models are not distributed here
 - [Atomic checkpoint/recovery](docs/atomic-checkpoint-recovery.md): committed generations, strict restart, failure tests and durability limits.
 - [Interactive chat](docs/interactive-chat.md): safe boundaries, held proposals, reasoning effort and terminal FINISH.
 - [GUI tools](docs/gui-tools.md): private display, actions, browser lifecycle and integration checks.
+- [Custom functions](docs/custom-functions.md): module loading, typed contracts and trust/recovery limits.
+- [DOCX pack](docs/docx-functions.md) and [XLSX pack](docs/xlsx-functions.md): dependencies, reading/editing/rendering and coverage limits.
 
 ## License
 
 Licensed under the [MIT License](LICENSE).
 
-## Interactive chat (v0.3)
+## Interactive chat
 
-`--interactive` keeps the Worker autonomous within one active TASK and requires terminal
-stdin. It enables the existing live output automatically. Press **Ctrl+Z** to request
+Default interactive mode keeps the Worker autonomous within one active TASK and requires terminal
+stdin. `--no-interactive` disables chat; `--no-live` disables Worker progress while
+retaining chat messages and pause controls. Press **Ctrl+Z** to request
 PAUSE, then wait for **PAUSED — safe to type** before composing an intervention.
 A message plus Enter resumes with that input; empty Enter resumes a held proposal
 without a message. `/quit` or EOF at the paused prompt ends the session.
 **FINISH terminates the runtime**; a new TASK needs a separate invocation and its own State.
-Piped task input remains available without interactive mode.
+Piped task input remains available with `--no-interactive`.
 
 Worker can use `message` to speak and continue, or `wait_for_user` when input is necessary.
 See [interactive lifecycle, boundaries, recovery and limitations](docs/interactive-chat.md).

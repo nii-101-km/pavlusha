@@ -25,6 +25,7 @@ from typing import Any
 
 from .core import AgentError, _trim
 from .sandbox import build_bwrap_command
+from .gui_helper import PHYSICAL_KEYS, MODIFIER_KEYS, MAX_HOLD_SECONDS
 
 WIDTH, HEIGHT = 800, 600
 MAX_DELAY = 10.0
@@ -33,7 +34,8 @@ MAX_TEXT = 64
 MAX_IMAGE_BYTES = 12 * 1024 * 1024
 GUI_HELPER_TIMEOUT = 3.0
 GUI_ACTIONS = {
-    "gui_start", "view_gui", "click", "right_click", "drag", "type_text", "gui_close"
+    "gui_start", "view_gui", "click", "right_click", "drag", "type_text", "gui_close",
+    "press_key", "hold_key",
 }
 
 
@@ -126,6 +128,29 @@ def validate_gui_action(action: dict[str, Any], max_command_timeout: int) -> tup
             "y2": _coord(action["y2"], name="y2", bound=HEIGHT),
             "delay": _delay(action.get("delay")),
         }
+
+    if kind in {'press_key', 'hold_key'}:
+        allowed = {'action', 'key', 'delay', 'modifiers' if kind == 'press_key' else 'duration'}
+        if set(action) - allowed:
+            raise GuiError(f'{kind} has unsupported fields')
+        key = action.get('key')
+        if not isinstance(key, str) or key not in PHYSICAL_KEYS:
+            raise GuiError('unsupported physical key name')
+        data = {'key': key, 'delay': _delay(action.get('delay'))}
+        if kind == 'press_key':
+            modifiers = action.get('modifiers', [])
+            if (not isinstance(modifiers, list) or len(modifiers) > len(MODIFIER_KEYS)
+                    or any(not isinstance(m, str) or m not in MODIFIER_KEYS for m in modifiers)
+                    or len(set(modifiers)) != len(modifiers)):
+                raise GuiError('modifiers must be distinct supported modifier names')
+            data['modifiers'] = [m for m in MODIFIER_KEYS if m in modifiers]
+        else:
+            duration = action.get('duration')
+            if (type(duration) not in (int, float) or not math.isfinite(duration)
+                    or not 0 < duration <= MAX_HOLD_SECONDS):
+                raise GuiError(f'hold_key.duration must be finite and > 0, <= {MAX_HOLD_SECONDS:g} seconds')
+            data['duration'] = float(duration)
+        return kind, data
 
     if kind == "type_text":
         if set(action) - {"action", "text", "delay"}:
@@ -225,7 +250,7 @@ class PrivateDisplay:
 
     def action(self, action: dict[str, Any], timeout: float) -> bytes:
         command = [sys.executable, "-B", str(Path(__file__).with_name("gui_helper.py"))]
-        if action["action"] == "drag":
+        if action["action"] in {"drag", "press_key", "hold_key", "release_keys"}:
             # Trusted helper deadline, not model supplied. Reserve a little release time.
             command.append(str(time.monotonic() + min(timeout, 3.0) - 0.1))
         try:
@@ -239,12 +264,31 @@ class PrivateDisplay:
                 timeout=min(timeout, 3.0),
                 check=False,
             )
+        except (KeyboardInterrupt, SystemExit):
+            if action['action'] in {'press_key', 'hold_key'}:
+                self._release_keyboard(action)
+            raise
         except (OSError, subprocess.TimeoutExpired) as exc:
+            if action['action'] in {'press_key', 'hold_key'}:
+                self._release_keyboard(action)
             raise GuiError("private GUI helper unavailable or timed out") from exc
         if result.returncode:
+            if action['action'] in {'press_key', 'hold_key'}:
+                self._release_keyboard(action)
             detail = result.stderr.decode("utf-8", "replace") if result.stderr else ""
             raise GuiError("private GUI helper failed: " + _trim(detail, 500))
         return result.stdout
+
+    def _release_keyboard(self, action):
+        # A killed/failed helper may not have reached its finally. Use a new bounded
+        # connection, with no press. If X cannot confirm release, retire its display.
+        cleanup = {'action': 'release_keys', 'key': action['key'],
+                   'modifiers': action.get('modifiers', [])}
+        try:
+            self.action(cleanup, 1.0)
+        except GuiError as exc:
+            self.__exit__(None, None, None)
+            raise GuiError('keyboard release could not be confirmed; private display closed') from exc
 
 
 def _font():
@@ -589,6 +633,8 @@ class GuiRuntime:
                 gesture = dict(helper)
             elif kind == "type_text":
                 helper = {"action": kind, "text": data["text"]}
+            elif kind in {'press_key', 'hold_key'}:
+                helper = {'action': kind, **{name: data[name] for name in ('key', 'modifiers', 'duration') if name in data}}
             elif kind == "gui_close":
                 helper = {"action": "close"}
             else:
@@ -612,6 +658,8 @@ class GuiRuntime:
                     result[name] = data[name]
             if kind == "type_text":
                 result["text_chars"] = len(data["text"])
+            if kind in {'press_key', 'hold_key'}:
+                result.update({name: data[name] for name in ('key', 'modifiers', 'duration') if name in data})
             if kind == "gui_close":
                 self.close()
                 result["state"] = "closed"

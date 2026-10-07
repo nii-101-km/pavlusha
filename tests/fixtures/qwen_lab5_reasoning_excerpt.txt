@@ -1,0 +1,6 @@
+I'm noticing the logical operators are getting lost in the text extraction,
+leaving gaps where they should be.
+Looking at the pattern across different variants, I can see the structure is
+consistent—parentheses around the first operation, then a second operator
+connecting to the final variable—but the actual operators (AND, OR, NOT)
+aren't being captured properly in the extraction.

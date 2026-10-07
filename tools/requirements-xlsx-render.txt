@@ -1,0 +1,4 @@
+# Optional render dependencies, in addition to LibreOffice and Poppler on PATH.
+-r requirements-xlsx.txt
+Pillow>=9
+pdf2image>=1.17

@@ -54,7 +54,7 @@ class ReleaseRuntimeTests(unittest.TestCase):
             if isinstance(outcome, Exception):
                 raise outcome
             return outcome or ShellResult(command, False, 0, False, 'OK', '', .01)
-        args = build_parser().parse_args([
+        args = build_parser().parse_args(['--no-interactive', '--no-live', '--no-network', '--project-map', 'off',
             '--workdir', str(root/'work'), '--state-dir', str(root/'state'),
             '--model', 'scripted', '--worker-context-budget', '40000',
             '--project-review-every', '0', '--max-steps', '4', '--project-map','on', 'task'])

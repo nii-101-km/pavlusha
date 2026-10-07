@@ -51,9 +51,12 @@ class ReasoningEffortTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             extra = ['--reasoning-effort', effort] if effort is not None else []
+            # Exercise both transports independently of default loop recovery,
+            # which requests streaming even without --live.
+            extra.extend(['--reasoning-loop-recovery', 'off'])
             if streaming:
                 extra.append('--live')
-            args = build_parser().parse_args([
+            args = build_parser().parse_args(['--no-interactive', '--no-live', '--no-network', '--project-map', 'off',
                 '--workdir', str(root/'work'), '--state-dir', str(root/'state'),
                 '--model', 'scripted', '--worker-context-budget', '40000',
                 '--max-steps','4','--project-review-every','0', *extra, 'task'])

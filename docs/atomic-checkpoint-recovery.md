@@ -179,7 +179,8 @@ has authorized recovery; it cannot substitute for State.
   checkpoint validation leaves history intact. The context-budget guard was not modified.
 - Periodic review still permits `project_update`/`project_review_skip`, acknowledges operation count,
   preserves the frozen prompt/history, and never publishes or increments the committed envelope.
-- Reasoning-loop off/observe/recover, default off, detector, HTTP interruption, diagnostic-only
+- Reasoning-loop off/observe/recover (default off at the time of this audit;
+  now recover), detector, HTTP interruption, diagnostic-only
   partial reasoning, one-turn marker and three retry attempts were not changed. Loop interruption
   alone cannot publish a generation or replace handoff.
 - Positive max-steps and `-1` unlimited are unchanged. No watchdog is used as a checkpoint trigger.

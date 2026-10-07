@@ -31,6 +31,10 @@ class ExperimentRecorder:
         self._append({"kind": "context_overflow_recovery", "step": step,
                       "checkpoint_sha256": checkpoint, "error": error})
 
+    def record_human_escalation(self, *, step: int, attempts: int, resumed: bool) -> None:
+        self._append({"kind": "human_escalation", "reason": "reasoning_loop_exhaustion",
+                      "step": step, "recovery_attempts": attempts, "resumed": resumed})
+
     def record_expert_call(self, *, step: int, event: dict[str, Any]) -> None:
         """Factual request metadata only; no prompt, answer, key or reasoning."""
         self._append({"kind": "expert_call", "step": step, **event})

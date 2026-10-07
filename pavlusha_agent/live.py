@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import json
 import sys
 import time
 from typing import Any, TextIO
@@ -226,13 +227,18 @@ class LiveConsoleRenderer:
                             self._line("    " + self._paint("metadata", "EVIDENCE") + "  " + item.strip())
         elif kind == "project_review_complete":
             self._line(f"{self._stamp()}  {self._paint('state', 'PROJECT STATE')}  review complete")
-        elif kind in {"gui_start", "view_gui", "click", "right_click", "drag", "type_text", "gui_close"}:
+        elif kind in {"gui_start", "view_gui", "click", "right_click", "drag", "type_text", "gui_close", "press_key", "hold_key"}:
             self._line(f"{self._stamp()}  {self._paint('external', 'GUI')}  {kind}")
             coords = " ".join(f"{name}={data[name]}" for name in ("x", "y", "x1", "y1", "x2", "y2") if name in data)
             if coords:
                 self._line("  " + coords)
+            if kind in {'press_key', 'hold_key'}:
+                self._line('  ' + '+'.join([*data.get('modifiers', []), data['key']]) +
+                           (f" for {data['duration']:g}s" if kind == 'hold_key' else ''))
             if kind == "gui_start":
                 self._line("  $ " + self._paint("command", str(data.get("command", ""))))
+        elif kind == "call_function":
+            self._line(f"{self._stamp()}  {self._paint('external', 'FUNCTION')}  {data.get('name')}")
         elif kind == "ask_expert":
             self._line(f"{self._stamp()}  {self._paint('external', 'EXPERT')}  requested")
         elif kind == "project_review_skip":
@@ -267,6 +273,13 @@ class LiveConsoleRenderer:
             self._line(self._paint("metadata", f"  {result['duration_seconds']}s · prompt {result.get('prompt_tokens', '?')} · completion {result.get('completion_tokens', '?')}"))
         if isinstance(result.get("answer"), str):
             self._markdown(result["answer"])
+
+    def function_result(self, op_id: str, result: dict[str, Any]) -> None:
+        self._close_streams()
+        self._literal(json.dumps(result, ensure_ascii=False))
+        error = result.get("error")
+        status = f"failed · {error}" if error else "returned"
+        self._line(f"  {op_id} · " + self._paint("error" if error else "success", status))
 
     def operation(self, op_id: str, result: dict[str, Any]) -> None:
         self._close_streams()

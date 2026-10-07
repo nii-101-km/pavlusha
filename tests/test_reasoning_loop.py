@@ -24,6 +24,8 @@ LOOP = (' '.join(f'cycleword{i}' for i in range(240))+' ')*8
 FINISH = {'action':'finish','summary':'done'}
 SHELL = {'action':'shell','command':'verify','network':False}
 FIXTURE = Path(__file__).parent/'fixtures/glm_ocr_reasoning.json'
+QWEN_EXCERPT = Path(__file__).parent/'fixtures/qwen_lab5_reasoning_excerpt.txt'
+QWEN_TRACE = Path(__file__).parent/'fixtures/qwen_lab5_step10_reasoning.txt'
 
 
 def detect(text, chunk_size):
@@ -36,6 +38,57 @@ def detect(text, chunk_size):
 
 
 class DetectorTests(unittest.TestCase):
+    def test_real_qwen_lab5_interrupted_generation_is_detected(self):
+        # Full terminal-captured STEP 10, including its unique preamble and final
+        # truncated sentence. No repetition was added to this fixture.
+        text = QWEN_TRACE.read_text()
+        self.assertEqual(len(re.findall(r'\w+', text)), 3953)
+        detector, signals = detect(text,97)
+        signal = detector.confirmation
+        self.assertIsNotNone(signal)
+        self.assertEqual(signal.word_count, 880)
+        self.assertEqual(signal.window_start, 640)
+        self.assertEqual(signal.matched_window_start, 120)
+        self.assertEqual(signal.similarity, 1.0)
+        self.assertEqual(signal.consecutive_matches, 2)
+        scores = {s.word_count: s.similarity for s in signals}
+        self.assertAlmostEqual(scores[720], 0.3522727272727273)
+        self.assertAlmostEqual(scores[760], 0.45588235294117646)
+        self.assertAlmostEqual(scores[800], 0.6391752577319587)
+        self.assertEqual(scores[840], 1.0)
+        for chunk_size in (1,7,511,len(text)):
+            self.assertEqual(detect(text,chunk_size)[0].confirmation,signal)
+
+    def test_qwen_lab5_quoted_excerpt_replay_and_minimum_lag(self):
+        # Actual user-quoted text; the repetition count is reconstructed, not a
+        # claim that an unavailable full streamed generation was captured.
+        excerpt = QWEN_EXCERPT.read_text()
+        self.assertEqual(len(re.findall(r'\w+', excerpt)), 62)
+        short, signals = detect(excerpt * 11, 97)
+        self.assertIsNone(short.confirmation)
+        self.assertEqual(short.word_count, 682)
+        self.assertTrue(all(s.matched_window_start is None for s in signals))
+        one, signals = detect(excerpt * 12, 97)
+        self.assertIsNone(one.confirmation)
+        self.assertEqual(signals[-1].window_start, 480)
+        self.assertEqual(signals[-1].matched_window_start, 0)
+        self.assertEqual(signals[-1].similarity, 1.0)
+        self.assertEqual(signals[-1].consecutive_matches, 1)
+        decisions = [detect(excerpt * 13, n)[0].confirmation for n in (1, 7, 97, 511, 100000)]
+        self.assertTrue(all(d == decisions[0] for d in decisions))
+        self.assertEqual(decisions[0].word_count, 760)
+        self.assertEqual(decisions[0].window_start, 520)
+        self.assertEqual(decisions[0].matched_window_start, 0)
+        self.assertEqual(decisions[0].similarity, 1.0)
+        self.assertEqual(decisions[0].consecutive_matches, 2)
+
+    def test_long_real_reasoning_and_a_single_lab5_excerpt_are_not_a_cycle(self):
+        # Real OCR/application reasoning reuses page, model, code and condition
+        # vocabulary extensively while progressing through distinct decisions.
+        text = json.loads(FIXTURE.read_text())['turns']['38']
+        self.assertGreater(len(re.findall(r'\w+', text)), 7500)
+        self.assertIsNone(detect(text + '\n' + QWEN_EXCERPT.read_text(),97)[0].confirmation)
+
     def test_repeated_cycle_requires_two_lagged_matches(self):
         detector,signals=detect(LOOP,17)
         self.assertIsNotNone(detector.confirmation)
@@ -200,10 +253,11 @@ class RuntimeRecoveryTests(unittest.TestCase):
             from pavlusha_agent.core import ShellResult
             commands.append(command)
             return ShellResult(command,False,0,False,'verified','',0.01)
-        args=build_parser().parse_args(['--model','model','--workdir',str(root/'work'),
+        args=build_parser().parse_args(['--no-interactive', '--no-live', '--no-network', '--project-map', 'off', '--model','model','--workdir',str(root/'work'),
             '--state-dir',str(root/'state'),'--worker-context-budget','100000',
             '--history-high','99','--project-review-every','0','--max-steps','50',
-            '--project-map','on','--reasoning-loop-recovery',mode,*extra,'task'])
+            '--project-map','on',*(['--reasoning-loop-recovery',mode] if mode is not None else []),
+            *extra,'task'])
         with patch('pavlusha_agent.runtime.shutil.which',return_value='/fake/bwrap'), \
              patch('pavlusha_agent.runtime.ProjectMap',Map), \
              patch('urllib.request.urlopen',side_effect=send), \
@@ -232,6 +286,46 @@ class RuntimeRecoveryTests(unittest.TestCase):
                 self.assertEqual(case['maps'],['refresh'])
                 self.assertEqual(case['state']['checkpoint_handoff'],'SEED_HANDOFF')
                 self.assertNotIn('REASONING RECOVERY',str(case['requests']))
+
+    def test_real_qwen_trace_replay_off_observe_and_recover(self):
+        reasoning = QWEN_TRACE.read_text()
+        for mode in ('off', 'observe', 'recover'):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
+                replies = ([script(SHELL, reasoning), script()] if mode != 'recover'
+                           else [script({'action':'shell','command':'NEVER_EXECUTE'},reasoning),
+                                 script(SHELL),script()])
+                case = self.run_case(Path(tmp), replies, mode=mode)
+                self.assertEqual(case['result'], 0, case['error'])
+                self.assertEqual(case['commands'], ['verify'])
+                loops = [e for e in case['events'] if e['kind'] == 'reasoning_loop']
+                self.assertEqual(len(loops), int(mode != 'off'))
+                if loops:
+                    self.assertEqual(loops[0]['word_count'], 880)
+                    self.assertEqual(loops[0]['similarity'], 1.0)
+                    self.assertEqual(loops[0]['interrupted'], mode == 'recover')
+                self.assertEqual(case['before']['project_state'], case['state']['project_state'])
+
+    def test_default_recovers_real_qwen_trace_without_explicit_flag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            case = self.run_case(Path(tmp),
+                [script({'action':'shell','command':'NEVER_EXECUTE'}, QWEN_TRACE.read_text()),
+                 script(SHELL), script()], mode=None)
+            self.assertEqual(case['result'], 0, case['error'])
+            self.assertEqual(case['commands'], ['verify'])
+            loops = [e for e in case['events'] if e['kind'] == 'reasoning_loop']
+            self.assertEqual(len(loops), 1)
+            self.assertEqual(loops[0]['word_count'], 880)
+            self.assertEqual(loops[0]['similarity'], 1.0)
+            self.assertTrue(loops[0]['interrupted'])
+            self.assertEqual(case['before']['project_state'], case['state']['project_state'])
+
+    def test_explicit_off_does_not_create_detector(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch('pavlusha_agent.runtime.ReasoningLoopDetector') as detector:
+            case = self.run_case(Path(tmp), [script(SHELL, QWEN_TRACE.read_text()), script()], mode='off')
+            self.assertEqual(case['result'], 0, case['error'])
+            self.assertEqual(case['commands'], ['verify'])
+            detector.assert_not_called()
 
     def test_recover_keeps_preloop_context_and_resets_on_accepted_action(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -342,7 +436,12 @@ class RuntimeRecoveryTests(unittest.TestCase):
 
     def test_cli_defaults_and_validation(self):
         args=build_parser().parse_args(['task'])
-        self.assertEqual(args.reasoning_loop_recovery,'off')
+        self.assertEqual(args.reasoning_loop_recovery,'recover')
+        for interactive in ([], ['--interactive']):
+            self.assertEqual(build_parser().parse_args([*interactive,'task']).reasoning_loop_recovery,'recover')
+            for mode in ('off', 'observe', 'recover'):
+                self.assertEqual(build_parser().parse_args(
+                    [*interactive,'--reasoning-loop-recovery',mode,'task']).reasoning_loop_recovery,mode)
         self.assertEqual(args.max_reasoning_loop_recoveries,3)
         for limit in ('0','-1'):
             with patch('sys.argv',['agent.py','--max-reasoning-loop-recoveries',limit,'task']), \
@@ -408,7 +507,7 @@ class HTTPStreamingRecoveryTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmp:
                 root=Path(tmp)
                 RuntimeRecoveryTests().seed(root)
-                args=build_parser().parse_args(['--base-url',f'http://127.0.0.1:{server.server_port}/v1',
+                args=build_parser().parse_args(['--no-interactive', '--no-live', '--no-network', '--project-map', 'off', '--base-url',f'http://127.0.0.1:{server.server_port}/v1',
                     '--model','local-sse-fixture','--workdir',str(root/'work'),'--state-dir',str(root/'state'),
                     '--worker-context-budget','100000','--max-steps','1','--project-review-every','0',
                     '--reasoning-loop-recovery','recover','task'])

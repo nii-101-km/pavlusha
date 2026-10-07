@@ -79,10 +79,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("task", nargs="*", help="task text; if omitted, read it from stdin")
     parser.add_argument("--workdir", default="./agent-work", help="persistent writable working directory")
-    parser.add_argument("--network", action="store_true", help="allow the model to request networked shell commands")
+    parser.add_argument("--network", action=argparse.BooleanOptionalAction, default=True,
+                        help="allow requested networked shell/GUI/Expert operations (default: on; --no-network disables)")
+    parser.add_argument("--functions", action="append", metavar="MODULE.py", help="load trusted local synchronous Python functions for this run; repeat for multiple modules (not sandboxed)")
     parser.add_argument(
-        "--gui", action="store_true",
-        help="enable private 800x600 Xvfb GUI actions (requires Xvfb, python-xlib and Pillow)",
+        "--gui", action=argparse.BooleanOptionalAction, default=True,
+        help="private 800x600 Xvfb GUI actions (default: enabled when dependencies are available; --no-gui disables)",
     )
     parser.add_argument("--self-test-bwrap", action="store_true", help="test the local bubblewrap isolation and exit")
     parser.add_argument("--base-url", default=os.getenv("AGENT_BASE_URL", "http://127.0.0.1:1234/v1"))
@@ -106,10 +108,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="State Manager HTTP timeout; reasoning itself is separately bounded",
     )
     parser.add_argument("--reasoning-loop-recovery", choices=("off", "observe", "recover"),
-                        default="off", help="streamed lexical loop detection; off preserves prior behavior")
+                        default="recover", help="streamed lexical loop detection (default: recover); off disables detection")
     parser.add_argument("--max-reasoning-loop-recoveries", type=int, default=3,
                         help="maximum consecutive retry generations after a lexical loop (default: 3)")
-    parser.add_argument("--max-steps", type=int, default=60, help="Worker step limit; -1 means unlimited")
+    parser.add_argument("--max-steps", type=int, default=-1, help="Worker step limit (default: -1, unlimited)")
     parser.add_argument(
         "--state-dir",
         help="controller-owned persistent state directory; default: <workdir>.pavlusha-state",
@@ -140,8 +142,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--project-map", choices=("off", "on"), default=DEFAULT_PROJECT_MAP,
         help=(
-            "on supplies a frozen checkpoint snapshot of the Python project map; "
-            "file SHA-256 values are cached outside /work and only changed files are reparsed"
+            "on (default) supplies a frozen checkpoint snapshot of the Python project map; "
+            "file SHA-256 values are cached outside /work and only changed files are reparsed; "
+            "missing indexer dependencies disable the map with a diagnostic"
         ),
     )
     parser.add_argument(
@@ -150,8 +153,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--history-context-high", type=float, default=0.85,
                         help="HIGH fraction of provider-reported prompt usage / model capacity (default: 0.85)")
-    parser.add_argument("--history-high", type=int, default=30,
-                        help="require a fresh checkpoint and full history reset at this many retained Worker steps (default: 30)")
+    parser.add_argument("--history-high", type=int, default=200,
+                        help="require a fresh checkpoint and full history reset at this many retained Worker steps (default: 200)")
     parser.add_argument(
         "--worker-context-control", choices=("off", "drop"), default=DEFAULT_WORKER_CONTEXT_CONTROL,
         help=(
@@ -212,7 +215,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--project-review-every", type=int, default=DEFAULT_PROJECT_REVIEW_EVERY,
-        help="force a Project State review after this many executed shell operations; 0 disables periodic review",
+        help="force a Project State review after this many executed shell/function operations; 0 disables periodic review",
     )
     parser.add_argument(
         "--state-cycle-after", type=int, default=DEFAULT_STATE_CYCLE_AFTER,
@@ -249,8 +252,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--reasoning-effort", help="optional Worker reasoning_effort string passed unchanged to provider; omission uses provider/model default")
     parser.add_argument("--temperature", type=float, default=0.1)
-    parser.add_argument("--interactive", action="store_true", help="terminal chat; Ctrl+Z requests a safe pause, /quit ends the session")
-    parser.add_argument("--live", action="store_true", help="append-only human-friendly live terminal log with streamed Worker output")
+    parser.add_argument("--interactive", action=argparse.BooleanOptionalAction, default=True,
+                        help="terminal chat (default: on; --no-interactive for pipes/batch); Ctrl+Z pauses, /quit ends")
+    parser.add_argument("--live", action=argparse.BooleanOptionalAction, default=True,
+                        help="append-only live Worker log (default: on; --no-live disables progress, chat remains available)")
     parser.add_argument("-v", "--verbose", action="store_true")
     obsolete = {
         "history_window", "worker_context_control", "context_pressure_guidance",

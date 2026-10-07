@@ -88,7 +88,8 @@ def replace_candidate(source,destination):
     actual_replace(source,destination)
     if matches and boundary=='after_replace': os._exit(72)
 
-args=build_parser().parse_args(['--workdir',str(root/'work'),'--state-dir',str(root/'state'),
+args=build_parser().parse_args(['--no-interactive','--no-live','--no-network',
+    '--workdir',str(root/'work'),'--state-dir',str(root/'state'),
     '--model','scripted','--worker-context-budget','40000','--max-tokens','1024',
     '--history-high',history_high,'--project-review-every','0','--project-map','on',
     '--max-steps','-1','task'])

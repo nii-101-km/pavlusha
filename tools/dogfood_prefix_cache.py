@@ -1,4 +1,8 @@
-"""Opt-in real runtime smoke test, including drop, compaction and live streaming."""
+"""Historical prefix-cache probe for the retired drop/compaction protocol.
+
+This is not a current-runtime regression test: drop_context was removed, and
+the maintenance CLI options below are accepted only for compatibility.
+"""
 import argparse
 from pathlib import Path
 import subprocess
@@ -24,7 +28,7 @@ def run():
         status = subprocess.run([
             sys.executable, str(Path(__file__).resolve().parents[1] / 'agent.py'),
             '--workdir', str(output / 'work'), '--state-dir', str(output / 'state'),
-            '--reset-state', '--model', 'qwen/qwen3.8-27b', '--live', '--verbose',
+            '--no-interactive', '--reset-state', '--model', 'qwen/qwen3.8-27b', '--live', '--verbose',
             '--worker-context-control', 'drop', '--state-cycle-after', '2',
             '--state-keep', '1', '--max-steps', '6', task,
         ], stdout=console, stderr=console).returncode

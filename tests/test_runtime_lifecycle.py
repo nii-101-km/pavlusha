@@ -48,7 +48,7 @@ def run_script(root, replies, *, extra=(), shell_hook=None, eof=None, task='task
         if shell_hook:
             shell_hook(workdir, command)
         return ShellResult(command, False, 0, False, 'OK', '', 0.01)
-    args = build_parser().parse_args([
+    args = build_parser().parse_args(['--no-interactive', '--no-live', '--no-network', '--project-map', 'off',
         '--workdir', str(root/'work'), '--state-dir', str(root/'state'),
         '--model', 'scripted', '--worker-context-budget', '40000', '--max-tokens', '1024',
         '--project-review-every', '0', '--max-steps', '50', *extra, task])

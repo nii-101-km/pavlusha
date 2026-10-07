@@ -88,6 +88,8 @@ class BenchmarkCredentialTests(unittest.TestCase):
             self.assertEqual(result, 0)
             child.assert_called_once()
             argv = child.call_args.args[0]
+            self.assertIn("--no-interactive", argv)
+            self.assertFalse(agent.build_parser().parse_args(argv[2:]).interactive)
             self.assertNotIn("--api-key", argv)
             self.assertNotIn(secret, " ".join(argv))
             self.assertEqual(child.call_args.kwargs["env"]["AGENT_API_KEY"], secret)

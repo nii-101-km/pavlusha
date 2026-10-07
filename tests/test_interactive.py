@@ -78,7 +78,7 @@ class InteractiveTests(unittest.TestCase):
                 result = enter(session)
                 sessions.append(session)
                 return result
-            args = build_parser().parse_args([
+            args = build_parser().parse_args(['--no-interactive', '--no-live', '--no-network', '--project-map', 'off',
                 '--interactive', '--workdir', str(root/'work'), '--state-dir', str(root/'state'),
                 '--model', 'scripted', '--worker-context-budget', '40000',
                 '--project-review-every', '0', '--max-steps', '50', *extra, 'task'])
@@ -310,7 +310,7 @@ class InteractiveTests(unittest.TestCase):
     def test_noninteractive_stdin_and_eof(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            args = build_parser().parse_args(['--workdir', str(root/'work'),
+            args = build_parser().parse_args(['--no-interactive', '--no-live', '--no-network', '--project-map', 'off', '--workdir', str(root/'work'),
                 '--state-dir', str(root/'state'), '--worker-context-budget', '40000',
                 '--project-review-every', '0'])
             replies = iter([init_turn(), done('verified'), turn({'action':'finish','summary':'Done'})])

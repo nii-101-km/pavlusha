@@ -158,7 +158,7 @@ class RuntimeProjectMapTests(unittest.TestCase):
              patch("pavlusha_agent.runtime.shutil.which", return_value="/test/bwrap"), \
              patch("pavlusha_agent.runtime.ChatProvider.worker_completion", completion), \
              patch("pavlusha_agent.runtime.run_shell", side_effect=shell):
-            args = build_parser().parse_args([
+            args = build_parser().parse_args(['--no-interactive', '--no-live', '--no-network', '--project-map', 'off',
                 "--workdir", str(Path(tmp) / "work"), "--state-dir", str(Path(tmp) / "state"),
                 "--worker-context-budget", "40000", "--project-map", "on",
                 "--raw-reasoning-limit", "999", "--project-review-every", "0",
@@ -169,7 +169,7 @@ class RuntimeProjectMapTests(unittest.TestCase):
 
     def test_project_map_is_checkpoint_snapshot_outside_working_context(self):
         class FakeMap:
-            def __init__(self, root, cache_path, *, reset=False): self.refreshes = 0
+            def __init__(self, root, cache_path, *, reset=False, indexer=None): self.refreshes = 0
             def refresh(self):
                 self.refreshes += 1
                 return SimpleNamespace(files=1, parsed=1, reused=0, removed=0, map_changed=True)
@@ -193,7 +193,7 @@ class RuntimeProjectMapTests(unittest.TestCase):
 
     def test_map_stays_frozen_after_shell_and_local_state_update(self):
         class FakeMap:
-            def __init__(self, root, cache_path, *, reset=False): self.version = 0
+            def __init__(self, root, cache_path, *, reset=False, indexer=None): self.version = 0
             def refresh(self):
                 self.version += 1
                 return SimpleNamespace(files=1, parsed=1, reused=0, removed=0, map_changed=True)
