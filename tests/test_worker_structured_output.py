@@ -54,8 +54,9 @@ class SchemaTests(unittest.TestCase):
             ordinary.validate(action)
             validate_project_action(action)
         variants = [
-            {'action': 'gui_start', 'command': 'app', 'network': False, 'timeout': 30, 'delay': None},
+            {'action': 'gui_start', 'command': 'app', 'network': False, 'delay': None},
             {'action': 'view_gui'}, {'action': 'click', 'x': 0, 'y': 599},
+            {'action': 'double_click', 'x': 400, 'y': 300},
             {'action': 'right_click', 'x': 799, 'y': 0},
             {'action': 'drag', 'x1': 0, 'y1': 0, 'x2': 799, 'y2': 599},
             {'action': 'type_text', 'text': ''}, {'action': 'gui_close'},
@@ -65,7 +66,7 @@ class SchemaTests(unittest.TestCase):
         self.assertEqual({x['action'] for x in variants}, GUI_ACTIONS)
         for action in variants:
             ordinary.validate(action)
-            validate_gui_action(action, 1800)
+            validate_gui_action(action)
         ordinary.validate({'action': 'ask_expert', 'question': 'what?', 'context': ''})
         validator(initialized=False).validate(INIT)
         validate_project_action(INIT)
@@ -198,6 +199,10 @@ class RuntimeWireTests(unittest.TestCase):
                    + [update] * 7 + [{'action': 'project_review_complete',
                                      'handoff': 'Next: run the pending shell check.'}]
                    + [SHELL, DONE, FINISH])
+        # Distinct inspections model progress; identical action/results now pause independently of HIGH.
+        replies = [{**item, 'command': f"{item['command']} # inspection {index}"}
+                   if item.get('action') == 'shell' else item
+                   for index, item in enumerate(replies)]
         reasoning = {step: 'The update is already recorded. Stop repeating it and run shell.'
                      for step in (35, 36, 37)}
         for streaming in (False, True):

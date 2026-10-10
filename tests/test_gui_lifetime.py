@@ -1,4 +1,4 @@
-"""Real GUI lifetime regression: no process mocks, old timeout exceeded repeatedly."""
+"""Real GUI lifetime regression: no process mocks, the session survives repeated idle periods."""
 import os
 from pathlib import Path
 import shutil

@@ -32,12 +32,12 @@ class ModuleFunctionsTests(unittest.TestCase):
                                '    return {"doubled": value * 2}\n')
         self.extra = ['--functions', str(self.first), '--functions', str(self.second)]
 
-    def test_cli_zero_one_two_and_single_path_api_compatibility(self):
+    def test_cli_zero_one_two_module_paths(self):
         parser = build_parser()
         self.assertIsNone(parser.parse_args([]).functions)
         self.assertEqual(parser.parse_args(self.extra[:2]).functions, [str(self.first)])
         self.assertEqual(parser.parse_args(self.extra).functions, [str(self.first), str(self.second)])
-        for paths in (self.first, str(self.first), [self.first]):
+        for paths in ([self.first], [str(self.first)]):
             self.assertEqual(FunctionRegistry(paths).call(call('add', a=2, b=3), 1000)['result'], 5)
 
     def test_both_functions_schema_and_launch_order(self):

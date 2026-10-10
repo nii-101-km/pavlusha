@@ -2,21 +2,10 @@
 
 from __future__ import annotations
 
-import argparse
-import copy
 import hashlib
 import json
-import os
-import shutil
-import signal
-import subprocess
-import sys
-import time
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 class AgentError(RuntimeError):
@@ -60,14 +49,6 @@ class ProviderTurn:
     tool_calls: list[dict[str, Any]] | None = None
 
 
-@dataclass
-class StateCycleResult:
-    state: dict[str, Any]
-    processed_iterations: list[str]
-    failed_iteration: str | None
-    quarantined_iterations: list[str]
-
-
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -108,10 +89,6 @@ def _extract_json_object(text: str) -> dict[str, Any]:
             "'action' field and all closing braces/brackets"
         ) from exc
     return value
-
-
-def _normalized(text: str) -> str:
-    return " ".join(text.split()).casefold()
 
 
 def _task_hash(task: str) -> str:

@@ -36,6 +36,11 @@ class ReasoningLoopDetector:
     After first confirmation the observer stops work for this generation.
     """
     def __init__(self) -> None:
+        self._fence_length = 0
+        self._closing_fence = False
+        self._in_code = False
+        self._fence_line = False
+        self._line_prefix: str | None = ""
         self.word_count = 0
         self._partial: list[str] = []
         self._words: deque[str] = deque(maxlen=WINDOW_WORDS)
@@ -47,7 +52,7 @@ class ReasoningLoopDetector:
         signals = []
         if self.confirmation is not None:
             return signals
-        for match in _WORD_RUNS.finditer(text):
+        for match in _WORD_RUNS.finditer(self._without_code(text)):
             run = match.group()
             if run[0].isalnum() or run[0] == "_":
                 self._partial.append(run)
@@ -59,12 +64,70 @@ class ReasoningLoopDetector:
                         break
         return signals
 
+    def _without_code(self, text: str) -> str:
+        """Ignore backtick fences, including delimiters split across SSE chunks.
+
+        Only a line prefix is buffered; ordinary prose remains streaming.
+        A closing fence must be at least as long as the opener, with no language tag.
+        An unclosed fence stays excluded until this generation ends.
+        """
+        prose = []
+        for char in text:
+            if char == "\n":
+                if self._line_prefix is not None:
+                    prose.append(self._consume_prefix())
+                if self._closing_fence:
+                    self._in_code = False
+                    self._fence_length = 0
+                prose.append("\n")
+                self._line_prefix = ""
+                self._fence_line = self._closing_fence = False
+                continue
+            if self._fence_line:
+                if char not in " \t\r":
+                    self._closing_fence = False
+                continue
+            if self._line_prefix is not None:
+                self._line_prefix += char
+                if not re.fullmatch(r" {0,3}`*", self._line_prefix):
+                    prose.append(self._consume_prefix())
+            elif not self._in_code:
+                prose.append(char)
+        return "".join(prose)
+
+    def _consume_prefix(self) -> str:
+        prefix, self._line_prefix = self._line_prefix or "", None
+        fence = re.fullmatch(r" {0,3}(`{3,})([^`]*)", prefix)
+        if fence:
+            length, suffix = len(fence[1]), fence[2]
+            if not self._in_code:
+                self._in_code = self._fence_line = True
+                self._fence_length = length
+                return "\n"
+            if length >= self._fence_length and not suffix.strip():
+                self._closing_fence = self._fence_line = True
+        return "" if self._in_code else prefix
+
     def finish(self) -> list[LoopSignal]:
         """Flush a final undelimited word for offline/end-of-stream observation."""
-        if self.confirmation is not None or not self._partial:
+        if self.confirmation is not None:
             return []
-        signal = self._finish_word()
-        return [signal] if signal is not None else []
+        signals = []
+        if self._line_prefix is not None:
+            prefix = self._consume_prefix()
+            for match in _WORD_RUNS.finditer(prefix):
+                run = match.group()
+                if run[0].isalnum() or run[0] == "_":
+                    self._partial.append(run)
+                elif self._partial:
+                    signal = self._finish_word()
+                    if signal is not None:
+                        signals.append(signal)
+        if self._partial:
+            signal = self._finish_word()
+            if signal is not None:
+                signals.append(signal)
+        return signals
 
     def _finish_word(self) -> LoopSignal | None:
         self._words.append("".join(self._partial).lower())

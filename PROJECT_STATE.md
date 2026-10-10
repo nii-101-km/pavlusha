@@ -81,7 +81,8 @@ A project with unfinished work must have exactly one ACTIVE work item. BLOCKED r
 SUPERSEDED requires a valid deviation. DONE does not trigger semantic evidence validation.
 
 Rejected Project State mutations are returned to the Worker as recoverable controller feedback rather than
-terminating the run. Evidence itself is only structurally normalized by Core.
+terminating the run immediately. Three consecutive malformed actions or rejected State mutations stop
+the run; an accepted action resets this shared counter. Evidence itself is only structurally normalized by Core.
 
 ## Periodic Project State review and history checkpoints
 
@@ -115,9 +116,9 @@ request. Context pressure uses provider-reported prompt-token usage, not a predi
 Provider/validation failures never authorize dropping history. Nothing is summarized or automatically
 restored. Reasoning remains working hypotheses, not durable truth.
 
-`--raw-reasoning-limit` and its legacy alias are deprecated no-ops. There is no separate reasoning
-retention, overflow checkpoint, reset notice, or active reasoning archive. Model generation limits
-and output admission are unchanged.
+Reasoning follows the same retention as actions and results. Obsolete RAW-buffer controls
+have been removed. There is no separate reasoning retention or reasoning archive.
+Model generation limits and output admission are unchanged.
 
 ## Recovery benchmark
 
@@ -130,12 +131,15 @@ checkpoint baseline + retained delta + current files/tests/environment and Worke
 `project_review_complete` accepts one optional `handoff` string, at most 2048 UTF-8 bytes.
 The Worker prompt requests immediate focus/next action/unfinished verification, not a State or
 history summary. Core commits it together with Project State and checkpoint metadata in
-`state.json.recovery_checkpoint`; top-level `checkpoint_handoff` remains the live prompt copy. Omission replaces it with empty
-text for compatibility. Only the latest value is loaded at startup and supplied after State/Map
+`state.json.recovery_checkpoint`. This envelope is the single stored handoff source;
+there is no duplicate top-level copy. Omission records empty text. Only the latest value is loaded at startup and supplied after State/Map
 and before Recent History. Periodic reviews neither create nor replace it. Existing exact-action
 audit archives are unchanged. The handoff may be stale; current files, State and Map take precedence.
 
 ### Atomic generation and cold restart
+
+Controller state uses schema 3; schemas 1 and 2 are rejected without automatic migration.
+A new state directory or explicit `--reset-state` starts fresh controller state and preserves work files.
 
 `project_init` atomically commits the initial recovery generation. Successful true HIGH
 `project_review_complete` or intentional Worker release replaces it with the next materialized

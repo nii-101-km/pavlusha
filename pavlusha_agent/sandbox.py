@@ -2,24 +2,14 @@
 
 from __future__ import annotations
 
-import argparse
-import copy
-import hashlib
-import json
 import os
-import shutil
 import signal
 import subprocess
-import sys
 import time
-import urllib.error
-import urllib.request
-from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .core import AgentError, ShellResult, _trim
+from .core import AgentError, ShellResult
 
 def _existing_system_paths() -> list[str]:
     # Deliberately do not bind /home, /root, /mnt, /media, /run or the host cwd.
@@ -103,11 +93,10 @@ def run_shell(
     *,
     network: bool,
     timeout: int,
-    output_limit: int,
     gpu: bool = False,
 ) -> ShellResult:
-    argv = build_bwrap_command(workdir, command, network=network,
-                               **({"gpu": True} if gpu else {}))
+    """Run a bounded sandbox command and return its output before admission checks."""
+    argv = build_bwrap_command(workdir, command, network=network, gpu=gpu)
     started = time.monotonic()
     process = subprocess.Popen(
         argv,
@@ -177,11 +166,6 @@ def admit_shell_result(result: ShellResult, output_limit: int) -> dict[str, Any]
 def validate_action(
     action: dict[str, Any],
     max_command_timeout: int,
-    *,
-    allow_context_drop: bool = False,
-    available_context_ids: set[str] | None = None,
-    available_context_tombstone_limits: dict[str, int] | None = None,
-    available_context_summary_limits: dict[str, int] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     kind = action.get("action")
     if kind == "finish":
@@ -190,115 +174,8 @@ def validate_action(
             raise AgentError("finish action requires a non-empty summary")
         return kind, {"summary": summary.strip()}
 
-    if kind == "drop_context":
-        if not allow_context_drop:
-            raise AgentError("drop_context is not enabled for this Worker")
-        raw_items = action.get("items")
-        normalized_items: list[dict[str, str]] = []
-        legacy_intent = ""
-        if raw_items is not None:
-            if not isinstance(raw_items, list) or not raw_items or len(raw_items) > 32:
-                raise AgentError("drop_context.items must be a non-empty list of at most 32 replacements")
-            for item in raw_items:
-                if not isinstance(item, dict):
-                    raise AgentError("drop_context.items entries must be objects")
-                handle = item.get("id")
-                reason = item.get("reason")
-                if not isinstance(handle, str) or not handle.strip():
-                    raise AgentError("drop_context item.id must be a non-empty handle")
-                if not isinstance(reason, str) or not reason.strip():
-                    raise AgentError("drop_context item.reason must be a non-empty string")
-                reason = reason.strip()
-                normalized_items.append({"id": handle.strip(), "reason": reason})
-        else:
-            # Backward-compatible legacy shape used by earlier benches/callers.
-            ids = action.get("ids")
-            intent = action.get("intent")
-            if (
-                not isinstance(ids, list)
-                or not ids
-                or len(ids) > 32
-                or any(not isinstance(item, str) or not item.strip() for item in ids)
-            ):
-                raise AgentError("drop_context.ids must be a non-empty list of at most 32 handles")
-            if not isinstance(intent, str) or not intent.strip():
-                raise AgentError("drop_context.intent must be a non-empty string")
-            legacy_intent = intent.strip()
-            normalized_items = [
-                {"id": str(item).strip(), "reason": legacy_intent} for item in ids
-            ]
-
-        normalized = [item["id"] for item in normalized_items]
-        if len(set(normalized)) != len(normalized):
-            raise AgentError("drop_context handle IDs must not contain duplicates")
-        if available_context_ids is not None:
-            unknown = [item for item in normalized if item not in available_context_ids]
-            if unknown:
-                raise AgentError(
-                    "drop_context references unavailable or non-removable handle(s): "
-                    + ", ".join(unknown)
-                )
-        if available_context_tombstone_limits is not None:
-            for item in normalized_items:
-                handle = item["id"]
-                limit = int(available_context_tombstone_limits.get(handle, 0) or 0)
-                if limit <= 0:
-                    raise AgentError(
-                        f"drop_context cannot reduce {handle}; leave the tiny raw item protected"
-                    )
-                if len(item["reason"]) > limit:
-                    raise AgentError(
-                        f"drop_context reason for {handle} must be at most {limit} characters "
-                        "for this raw item"
-                    )
-        return kind, {"items": normalized_items, "ids": normalized, "intent": legacy_intent}
-
-    if kind == "compact_context":
-        if not allow_context_drop:
-            raise AgentError("compact_context is not enabled for this Worker")
-        items = action.get("items")
-        if not isinstance(items, list) or not items or len(items) > 16:
-            raise AgentError("compact_context.items must be a non-empty list of at most 16 replacements")
-        normalized_items: list[dict[str, str]] = []
-        seen: set[str] = set()
-        for item in items:
-            if not isinstance(item, dict):
-                raise AgentError("compact_context.items entries must be objects")
-            handle = item.get("id")
-            summary = item.get("summary")
-            if not isinstance(handle, str) or not handle.strip():
-                raise AgentError("compact_context item.id must be a non-empty handle")
-            handle = handle.strip()
-            if handle in seen:
-                raise AgentError("compact_context handle IDs must not contain duplicates")
-            seen.add(handle)
-            if available_context_ids is not None and handle not in available_context_ids:
-                raise AgentError(
-                    "compact_context references unavailable or non-removable handle(s): " + handle
-                )
-            if not isinstance(summary, str) or not summary.strip():
-                raise AgentError(f"compact_context summary for {handle} must be non-empty")
-            summary = summary.strip()
-            if available_context_summary_limits is not None:
-                limit = int(available_context_summary_limits.get(handle, 0) or 0)
-                if limit <= 0:
-                    raise AgentError(
-                        f"compact_context cannot reduce {handle}; use drop_context if it is obsolete"
-                    )
-                if len(summary) > limit:
-                    raise AgentError(
-                        f"compact_context summary for {handle} is {len(summary)} characters; "
-                        f"maximum is {limit} for this raw item"
-                    )
-            normalized_items.append({"id": handle, "summary": summary})
-        return kind, {"items": normalized_items}
-
     if kind != "shell":
-        expected = (
-            "'shell', 'drop_context', 'compact_context', or 'finish'"
-            if allow_context_drop else "'shell' or 'finish'"
-        )
-        raise AgentError(f"unknown action {kind!r}; expected {expected}")
+        raise AgentError(f"unknown action {kind!r}; expected 'shell' or 'finish'")
 
     command = action.get("command")
     if not isinstance(command, str) or not command.strip():

@@ -34,7 +34,7 @@ MAX_TEXT = 64
 MAX_IMAGE_BYTES = 12 * 1024 * 1024
 GUI_HELPER_TIMEOUT = 3.0
 GUI_ACTIONS = {
-    "gui_start", "view_gui", "click", "right_click", "drag", "type_text", "gui_close",
+    "gui_start", "view_gui", "click", "double_click", "right_click", "drag", "type_text", "gui_close",
     "press_key", "hold_key",
 }
 
@@ -71,7 +71,7 @@ def _coord(value: Any, *, name: str, bound: int) -> int:
     return value
 
 
-def validate_gui_action(action: dict[str, Any], max_command_timeout: int) -> tuple[str, dict[str, Any]]:
+def validate_gui_action(action: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """Validate the public Worker GUI contract and normalize defaults."""
     if not isinstance(action, dict):
         raise GuiError("GUI action must be a JSON object")
@@ -80,7 +80,7 @@ def validate_gui_action(action: dict[str, Any], max_command_timeout: int) -> tup
         raise GuiError("not a GUI action")
 
     if kind == "gui_start":
-        allowed = {"action", "command", "network", "timeout", "delay"}
+        allowed = {"action", "command", "network", "delay"}
         if set(action) - allowed:
             raise GuiError("gui_start has unsupported fields")
         command = action.get("command")
@@ -89,13 +89,8 @@ def validate_gui_action(action: dict[str, Any], max_command_timeout: int) -> tup
         network = action.get("network", False)
         if not isinstance(network, bool):
             raise GuiError("gui_start.network must be true or false")
-        # Legacy compatibility field; GUI lifetime is owned by close/controller exit.
-        timeout = action.get("timeout", max_command_timeout)
-        if type(timeout) is not int:
-            raise GuiError("gui_start.timeout must be an integer")
-        timeout = max(1, min(timeout, max_command_timeout))
         return kind, {
-            "command": command.strip(), "network": network, "timeout": timeout,
+            "command": command.strip(), "network": network,
             "delay": _delay(action.get("delay"), default=DEFAULT_DELAY),
         }
 
@@ -104,7 +99,7 @@ def validate_gui_action(action: dict[str, Any], max_command_timeout: int) -> tup
             raise GuiError("view_gui has unsupported fields")
         return kind, {"delay": _delay(action.get("delay"), default=0.0)}
 
-    if kind in {"click", "right_click"}:
+    if kind in {"click", "double_click", "right_click"}:
         if set(action) - {"action", "x", "y", "delay"}:
             raise GuiError(f"{kind} has unsupported fields")
         if "x" not in action or "y" not in action:
@@ -337,13 +332,13 @@ def annotate_png(clean_png: bytes, gesture: dict[str, Any] | None) -> bytes:
     accent = (255, 40, 180, 255)
     kind = gesture.get("action")
 
-    if kind in {"click", "right_click"}:
+    if kind in {"click", "double_click", "right_click"}:
         x, y = int(gesture["x"]), int(gesture["y"])
         radius = 10
         draw.ellipse((x - radius, y - radius, x + radius, y + radius), outline=accent, width=4)
         draw.line((x - 15, y, x + 15, y), fill=accent, width=2)
         draw.line((x, y - 15, x, y + 15), fill=accent, width=2)
-        _label(draw, (x + 14, y + 12), "YOUR CLICK" if kind == "click" else "RIGHT CLICK", image.size)
+        _label(draw, (x + 14, y + 12), {"click": "YOUR CLICK", "double_click": "DOUBLE CLICK", "right_click": "RIGHT CLICK"}[kind], image.size)
     elif kind == "drag":
         x1, y1, x2, y2 = (int(gesture[name]) for name in ("x1", "y1", "x2", "y2"))
         draw.line((x1, y1, x2, y2), fill=accent, width=4)
@@ -380,6 +375,7 @@ class GuiObservation:
         kind = self.gesture.get("action") if self.gesture else None
         label = {
             "click": "YOUR CLICK",
+            "double_click": "DOUBLE CLICK",
             "right_click": "RIGHT CLICK",
             "drag": "DRAG",
         }.get(kind)
@@ -408,12 +404,11 @@ class GuiObservation:
 class GuiRuntime:
     """One optional long-lived GUI application inside the existing bubblewrap policy."""
 
-    def __init__(self, workdir: Path, state_dir: Path, *, max_command_timeout: int, network_allowed: bool):
+    def __init__(self, workdir: Path, state_dir: Path, *, network_allowed: bool):
         ensure_gui_dependencies()
         self.workdir = Path(workdir)
         self.directory = Path(state_dir) / "gui-runtime"
         self.directory.mkdir(parents=True, exist_ok=True)
-        self.max_command_timeout = max_command_timeout
         self.network_allowed = network_allowed
         self.display: PrivateDisplay | None = None
         self.process: subprocess.Popen[bytes] | None = None
@@ -625,7 +620,7 @@ class GuiRuntime:
 
             helper: dict[str, Any]
             gesture: dict[str, Any] | None = None
-            if kind in {"click", "right_click"}:
+            if kind in {"click", "double_click", "right_click"}:
                 helper = {"action": kind, "x": data["x"], "y": data["y"]}
                 gesture = dict(helper)
             elif kind == "drag":

@@ -179,6 +179,13 @@ def click(display, X, xtest, action) -> None:
             display.sync()
 
 
+def double_click(display, X, xtest, action) -> None:
+    """Two left clicks in one helper invocation, within the double-click interval."""
+    click(display, X, xtest, action)
+    time.sleep(0.05)
+    click(display, X, xtest, action)
+
+
 def right_click(display, X, xtest, action) -> None:
     """One ordinary right click; release even if press/sync raises."""
     xtest.fake_input(display, X.MotionNotify, x=action["x"], y=action["y"])
@@ -208,6 +215,8 @@ def main() -> None:
             sys.stdout.buffer.write(output.getvalue())
         elif kind == "click":
             click(d, X, xtest, action)
+        elif kind == "double_click":
+            double_click(d, X, xtest, action)
         elif kind == "right_click":
             right_click(d, X, xtest, action)
         elif kind == "drag":

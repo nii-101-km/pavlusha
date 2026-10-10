@@ -52,7 +52,7 @@ class FunctionsTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.module = self.root / 'capabilities.py'
         self.module.write_text(SOURCE)
-        self.registry = FunctionRegistry(self.module)
+        self.registry = FunctionRegistry([self.module])
 
     def test_loading_discovery_and_schema(self):
         self.assertEqual(set(self.registry.functions), {'multiply', 'nested', 'failure', 'invalid', 'enormous'})
@@ -94,9 +94,9 @@ class FunctionsTests(unittest.TestCase):
         for expression in ('float("nan")', 'float("inf")', '{1: "bad"}', '(1, 2)', '{"nested": object()}',
                            'iter([1])'):
             self.module.write_text('def bad():\n    return ' + expression + '\n')
-            self.assertEqual(FunctionRegistry(self.module).call(call('bad'), 1000)['error'], 'invalid_result')
+            self.assertEqual(FunctionRegistry([self.module]).call(call('bad'), 1000)['error'], 'invalid_result')
         self.module.write_text('def bad() -> int:\n    return "wrong"\n')
-        self.assertEqual(FunctionRegistry(self.module).call(call('bad'), 1000)['error'], 'invalid_result')
+        self.assertEqual(FunctionRegistry([self.module]).call(call('bad'), 1000)['error'], 'invalid_result')
 
     def test_fail_clearly_on_bad_modules_and_declarations(self):
         for source in ('def f(x): pass', 'def f(x: tuple[int]): pass',
@@ -107,9 +107,9 @@ class FunctionsTests(unittest.TestCase):
                        'x = 1', 'invalid syntax!'):
             self.module.write_text(source)
             with self.subTest(source=source), self.assertRaises(AgentError):
-                FunctionRegistry(self.module)
+                FunctionRegistry([self.module])
         with self.assertRaises(AgentError):
-            FunctionRegistry(self.root / 'missing.py')
+            FunctionRegistry([self.root / 'missing.py'])
 
     def test_history_ledger_following_shell_and_finish(self):
         seen, result, error = run_script(self.root, [init_turn(), turn(call(a=4)),

@@ -65,20 +65,20 @@ def required(messages):
 
 
 class PreflightTests(unittest.TestCase):
-    def test_unknown_and_large_byte_payload_do_not_trigger_high(self):
-        budget = PromptBudget(117248, 8000, .85)
+    def test_unknown_and_below_threshold_usage_do_not_trigger_high(self):
+        budget = PromptBudget(117248, .85)
         self.assertFalse(budget.needs_checkpoint())
-        budget.observe([{'role': 'user', 'content': 'X' * 200000}], 31771)
+        budget.observe(31771)
         self.assertFalse(budget.needs_checkpoint())
-        budget.observe([], None)
+        budget.observe(None)
         self.assertIsNone(budget.measured)
 
     def test_exact_measured_threshold(self):
-        budget = PromptBudget(117248, 8000, .85)
+        budget = PromptBudget(117248, .85)
         self.assertEqual(budget.high, 99660)
-        budget.observe([], 99659)
+        budget.observe(99659)
         self.assertFalse(budget.needs_checkpoint())
-        budget.observe([], 99660)
+        budget.observe(99660)
         self.assertTrue(budget.needs_checkpoint())
 
     def test_previous_112021_fixture_is_admitted_without_byte_high(self):
@@ -102,7 +102,7 @@ class PreflightTests(unittest.TestCase):
     def test_step19_reasoning_shell_continuation_is_admitted(self):
         reasoning = (Path(__file__).parent/'fixtures/step19_reasoning.txt').read_text()
         replies = [init_turn(reasoning='P'*83000), done('verified')]
-        replies += [turn({'action':'shell', 'command':'inspect'}) for _ in range(15)]
+        replies += [turn({'action':'shell', 'command':f'inspect file_{index}'}) for index in range(15)]
         eighteenth = turn({'action':'shell', 'command':'free -h'}, reasoning='Q'*10000)
         eighteenth.prompt_tokens = 27741
         nineteenth = turn({'action':'shell', 'command':'start background server'}, reasoning=reasoning)

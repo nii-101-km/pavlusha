@@ -19,9 +19,8 @@ Context notices and the temporary lexical recovery instruction are also separate
 messages, not another system prompt. Phase-dependent `response_format` is a
 generation schema, not an instruction source or substitute for Core validation.
 
-`STATE_MANAGER_PROMPT` and its tools remain compatibility/legacy code; the active
-Worker runtime does not invoke that Manager. Its wording about semantic memory
-must not be mistaken for the active Worker contract. It was left unchanged.
+The retired State Manager prompt and tools have been removed. The active contract
+is defined only by the Worker and enabled capability prompts described above.
 
 ## Classification of existing rule groups
 

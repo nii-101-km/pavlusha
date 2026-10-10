@@ -71,7 +71,7 @@ class GpuShellTests(unittest.TestCase):
         with patch('pavlusha_agent.sandbox._nvidia_compute_devices',side_effect=OSError('missing UVM')), \
              patch('pavlusha_agent.sandbox.subprocess.Popen') as popen, \
              self.assertRaisesRegex(OSError,'missing UVM'):
-            run_shell(Path('/private/work'),'true',network=False,gpu=True,timeout=3,output_limit=1000)
+            run_shell(Path('/private/work'),'true',network=False,gpu=True,timeout=3)
         popen.assert_not_called()
 
     def test_gpu_does_not_change_launch_or_process_group_timeout_escalation(self):
@@ -83,8 +83,8 @@ class GpuShellTests(unittest.TestCase):
                 with patch('pavlusha_agent.sandbox.build_bwrap_command',return_value=['bwrap','cmd']) as build, \
                      patch('pavlusha_agent.sandbox.subprocess.Popen',return_value=process) as popen, \
                      patch('pavlusha_agent.sandbox.os.killpg') as killpg:
-                    result=run_shell(Path('/private/work'),'cmd',network=False,gpu=gpu,timeout=1,output_limit=1000)
-                build.assert_called_once_with(Path('/private/work'),'cmd',network=False,**({'gpu':True} if gpu else {}))
+                    result=run_shell(Path('/private/work'),'cmd',network=False,gpu=gpu,timeout=1)
+                build.assert_called_once_with(Path('/private/work'),'cmd',network=False,gpu=gpu)
                 self.assertTrue(popen.call_args.kwargs['start_new_session'])
                 self.assertEqual([call.args for call in killpg.call_args_list],[(123,signal.SIGTERM),(123,signal.SIGKILL)])
                 self.assertEqual([call.kwargs for call in process.communicate.call_args_list],[{'timeout':1},{'timeout':.5},{}])

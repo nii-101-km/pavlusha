@@ -85,9 +85,10 @@ def worker_response_format(*, initialized: bool, checkpoint_required: bool = Fal
             y = {"type": "integer", "minimum": 0, "maximum": HEIGHT - 1}
             actions.extend([
                 _variant("action", "gui_start", {"command": text, "network": boolean,
-                                                  "timeout": integer, "delay": delay}, ("command",)),
+                                                  "delay": delay}, ("command",)),
                 _variant("action", "view_gui", {"delay": delay}),
                 _variant("action", "click", {"x": x, "y": y, "delay": delay}, ("x", "y")),
+                _variant("action", "double_click", {"x": x, "y": y, "delay": delay}, ("x", "y")),
                 _variant("action", "right_click", {"x": x, "y": y, "delay": delay}, ("x", "y")),
                 _variant("action", "drag", {"x1": x, "y1": y, "x2": x, "y2": y, "delay": delay},
                          ("x1", "y1", "x2", "y2")),

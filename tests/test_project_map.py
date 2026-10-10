@@ -161,7 +161,7 @@ class RuntimeProjectMapTests(unittest.TestCase):
             args = build_parser().parse_args(['--no-interactive', '--no-live', '--no-network', '--project-map', 'off',
                 "--workdir", str(Path(tmp) / "work"), "--state-dir", str(Path(tmp) / "state"),
                 "--worker-context-budget", "40000", "--project-map", "on",
-                "--raw-reasoning-limit", "999", "--project-review-every", "0",
+                "--project-review-every", "0",
                 "--max-steps", str(len(actions)), "task",
             ])
             self.assertEqual(run_agent(args), 0)

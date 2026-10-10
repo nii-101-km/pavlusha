@@ -33,7 +33,8 @@ from tests.test_reasoning_window import init_turn, turn
 
 class InteractiveTests(unittest.TestCase):
     def run_case(self, replies, lines=(), *, inference_pause=None,
-                 shell_pause=False, extra=(), read_hook=None):
+                 shell_pause=False, extra=(), read_hook=None, task_in_args=True, shell_runner=None,
+                 inference_interrupt=None):
         seen, commands, waiting, sessions = [], [], [], []
         scripted = iter(replies)
         inputs = iter(lines)
@@ -53,12 +54,17 @@ class InteractiveTests(unittest.TestCase):
                 seen.append(copy.deepcopy(messages))
                 if inference_pause == len(seen):
                     request()
+                if inference_interrupt == len(seen):
+                    with patch('pavlusha_agent.interactive.os.write'):
+                        signal.raise_signal(signal.SIGQUIT)
                 item = next(scripted)
                 if isinstance(item, Exception):
                     raise item
                 return item
             def shell(workdir, command, **kwargs):
                 commands.append(command)
+                if shell_runner is not None:
+                    return shell_runner(workdir, command, **kwargs)
                 if shell_pause:
                     request()
                     self.assertFalse(sessions[-1].paused)
@@ -68,7 +74,7 @@ class InteractiveTests(unittest.TestCase):
                 sessions.append(session)
                 self.assertTrue(session.paused)
                 waiting.append((len(seen), list(commands)))
-                self.assertIn('PAUSED — safe to type', output.getvalue())
+                self.assertIn('PAUSED — safe to type' if task_in_args or seen else 'TASK REQUIRED', output.getvalue())
                 if read_hook:
                     read_hook(root, seen, commands)
                 return next(inputs)
@@ -81,7 +87,7 @@ class InteractiveTests(unittest.TestCase):
             args = build_parser().parse_args(['--no-interactive', '--no-live', '--no-network', '--project-map', 'off',
                 '--interactive', '--workdir', str(root/'work'), '--state-dir', str(root/'state'),
                 '--model', 'scripted', '--worker-context-budget', '40000',
-                '--project-review-every', '0', '--max-steps', '50', *extra, 'task'])
+                '--project-review-every', '0', '--max-steps', '50', *extra, *(['task'] if task_in_args else [])])
             with patch('pavlusha_agent.runtime.sys.stdin', tty), \
                  patch('pavlusha_agent.runtime.shutil.which', return_value='/fake/bwrap'), \
                  patch('pavlusha_agent.provider.ChatProvider.resolve_model', return_value='scripted'), \
@@ -306,6 +312,17 @@ class InteractiveTests(unittest.TestCase):
         with self.assertRaisesRegex(AgentError, 'without discarding or replaying user messages'):
             self.run_case([init_turn(), turn({'action':'wait_for_user','text':'Need input'}),
                            ProviderContextOverflow('context overflow')], lines=('important constraint\n',))
+
+    def test_missing_task_prompts_for_task_without_startup_pause(self):
+        result, seen, commands, waiting, output, state, _ = self.run_case([
+            init_turn(), done('verified'), turn({'action': 'finish', 'summary': 'Done'})
+        ], lines=('\n', '   \n', 'task\n'), task_in_args=False)
+        self.assertEqual(result, 0)
+        self.assertEqual(waiting, [(0, []), (0, []), (0, [])])
+        self.assertIn('TASK REQUIRED', output)
+        self.assertNotIn('PAUSED — safe to type', output)
+        self.assertEqual(state['task']['original'], 'task')
+        self.assertEqual(len(seen), 3)
 
     def test_noninteractive_stdin_and_eof(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -68,7 +68,7 @@ print('dns-and-urllib-ok')
 """
         with tempfile.TemporaryDirectory() as tmp:
             work=Path(tmp)
-            result=run_shell(work,'python3 -S -c '+shlex.quote(code),network=True,timeout=25,output_limit=2000)
+            result=run_shell(work,'python3 -S -c '+shlex.quote(code),network=True,timeout=25)
             self.assertEqual(result.exit_code,0,result.stderr)
             self.assertIn('dns-and-urllib-ok',result.stdout)
             self.assertEqual(list(work.iterdir()),[])
@@ -85,10 +85,10 @@ print('dns-and-urllib-ok')
             code=f"import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:{server.server_port}', timeout=2).read())"
             with tempfile.TemporaryDirectory() as tmp:
                 for network in (True,False):
-                    result=run_shell(Path(tmp),'python3 -S -c '+shlex.quote(code),network=network,timeout=5,output_limit=2000)
+                    result=run_shell(Path(tmp),'python3 -S -c '+shlex.quote(code),network=network,timeout=5)
                     self.assertEqual(result.exit_code==0,network,result.stderr)
                 result=run_shell(Path(tmp),'test ! -w /etc/resolv.conf && test ! -e /run/systemd/private',
-                                 network=True,timeout=5,output_limit=2000)
+                                 network=True,timeout=5)
                 self.assertEqual(result.exit_code,0,result.stderr)
         finally:
             server.shutdown(); server.server_close(); thread.join()

@@ -67,7 +67,7 @@ class AtomicCheckpointTests(unittest.TestCase):
                 recovered=self.resume(root)
                 self.assertEqual(recovered['recovery_checkpoint'],committed)
                 self.assertEqual(recovered['project_state'],committed['project_state'])
-                self.assertEqual(recovered['checkpoint_handoff'],'HANDOFF_OLD')
+                self.assertEqual(recovered['recovery_checkpoint']['handoff'],'HANDOFF_OLD')
 
     def test_failure_while_building_candidate_keeps_previous_generation(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -99,7 +99,7 @@ class AtomicCheckpointTests(unittest.TestCase):
                 self.assertEqual(checkpoint['generation'],old['generation']+int(after))
                 self.assertEqual(checkpoint['handoff'],'HANDOFF_NEW' if after else 'HANDOFF_OLD')
                 self.assertEqual(recovered['project_state'],checkpoint['project_state'])
-                self.assertEqual(recovered['checkpoint_handoff'],checkpoint['handoff'])
+                self.assertEqual(recovered['recovery_checkpoint']['handoff'],checkpoint['handoff'])
                 self.assertEqual(len(checkpoint['project_state']['design']),2 if after else 1)
 
     def test_directory_fsync_failure_is_not_claimed_as_rollback(self):
@@ -114,7 +114,7 @@ class AtomicCheckpointTests(unittest.TestCase):
                     store.complete_project_review(step=5,handoff='HANDOFF_NEW')
             state=self.resume(root)
             self.assertEqual(state['recovery_checkpoint']['generation'],3)
-            self.assertEqual(state['checkpoint_handoff'],'HANDOFF_NEW')
+            self.assertEqual(state['recovery_checkpoint']['handoff'],'HANDOFF_NEW')
             validate_checkpoint(state,'task')
 
     def test_success_replaces_handoff_and_ignores_uncommitted_top_level_state(self):
@@ -130,7 +130,7 @@ class AtomicCheckpointTests(unittest.TestCase):
             recovered=self.resume(root)
             self.assertEqual(recovered['recovery_checkpoint'],committed)
             self.assertEqual(recovered['project_state'],committed['project_state'])
-            self.assertEqual(recovered['checkpoint_handoff'],'HANDOFF_NEW')
+            self.assertEqual(recovered['recovery_checkpoint']['handoff'],'HANDOFF_NEW')
             self.assertEqual(recovered['counters']['operation'],1)
             op=StateStore(root/'state','task').record_operation({'command':'next','exit_code':0})
             self.assertEqual(op['id'],'OP0002')
@@ -150,7 +150,7 @@ class AtomicCheckpointTests(unittest.TestCase):
                 self.resume(root)
 
     def test_missing_commit_fails_even_with_newer_work_map_logs_or_handoff(self):
-        for artifacts in ((),('candidate',),('world',),('state_without_checkpoint',)):
+        for artifacts in (('candidate',),('world',),('state_without_checkpoint',)):
             with self.subTest(artifacts=artifacts),tempfile.TemporaryDirectory() as tmp:
                 root=Path(tmp); state_dir=root/'state'; state_dir.mkdir()
                 work=root/'work'; work.mkdir(); (work/'valuable.py').write_text('def useful(): return 42\n')
@@ -218,12 +218,28 @@ class AtomicCheckpointTests(unittest.TestCase):
             with self.subTest(text=text[:1]),tempfile.TemporaryDirectory() as tmp:
                 root=Path(tmp); store=self.seed(root)
                 store.complete_project_review(step=4,handoff=text)
-                self.assertEqual(self.resume(root)['checkpoint_handoff'],text)
+                self.assertEqual(self.resume(root)['recovery_checkpoint']['handoff'],text)
                 old=store.load()
                 with self.assertRaises(AgentError): store.complete_project_review(step=5,handoff=text+'a')
                 self.assertEqual(store.load(),old)
         for value in ('\ud800',None,123):
             with self.subTest(value=repr(value)),self.assertRaises(AgentError): validate_handoff(value)
+
+    def test_existing_empty_state_directory_starts_a_new_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root/'state').mkdir()
+            seen, result, error = run_script(root, [
+                init_turn(),
+                turn({'action': 'project_update', 'changes': [
+                    {'op': 'update_work', 'id': 'W001', 'status': 'DONE', 'evidence': ['FILE: result.txt']},
+                    {'op': 'update_work', 'id': 'W002', 'status': 'DONE', 'evidence': ['FILE: result.txt']},
+                ]}),
+                turn({'action': 'finish', 'summary': 'Done'}),
+            ])
+            self.assertEqual(result, 0, error)
+            self.assertEqual(len(seen), 3)
+            self.assertEqual(StateStore(root/'state', 'task').load()['run']['status'], 'finished')
 
     def test_fresh_initial_commit_and_intentional_reset(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -269,7 +285,7 @@ class AtomicCheckpointTests(unittest.TestCase):
             case=reasoning_tests.RuntimeRecoveryTests().run_case(Path(tmp),[script(reasoning=LOOP),script(SHELL),script()])
             self.assertEqual(case['result'],0,case['error'])
             self.assertEqual(case['state']['recovery_checkpoint'],case['before']['recovery_checkpoint'])
-            self.assertEqual(case['state']['checkpoint_handoff'],'SEED_HANDOFF')
+            self.assertEqual(case['state']['recovery_checkpoint']['handoff'],'SEED_HANDOFF')
 
 
 @unittest.skipUnless(importlib.util.find_spec("tree_sitter") and importlib.util.find_spec("tree_sitter_python"),

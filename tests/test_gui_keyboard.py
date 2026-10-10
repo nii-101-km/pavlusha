@@ -20,13 +20,13 @@ from tests.test_worker_structured_output import validator
 class KeyboardContractTests(unittest.TestCase):
     def test_valid_shapes_and_modifier_order(self):
         action = {'action': 'press_key', 'key': 'l', 'modifiers': ['shift', 'ctrl']}
-        kind, data = validate_gui_action(action, 120)
+        kind, data = validate_gui_action(action)
         self.assertEqual(kind, 'press_key')
         self.assertEqual(data['modifiers'], ['ctrl', 'shift'])
         for action in (action, {'action': 'press_key', 'key': 'page_down'},
                        {'action': 'hold_key', 'key': 'w', 'duration': MAX_HOLD_SECONDS}):
             validator(initialized=True, gui_enabled=True).validate(action)
-            validate_gui_action(action, 120)
+            validate_gui_action(action)
 
     def test_invalid_shapes_fail_closed_in_core_and_schema(self):
         actions = [
@@ -45,12 +45,12 @@ class KeyboardContractTests(unittest.TestCase):
         for action in actions:
             with self.subTest(action=action):
                 with self.assertRaises(GuiError):
-                    validate_gui_action(action, 120)
+                    validate_gui_action(action)
                 with self.assertRaises(ValidationError):
                     validator(initialized=True, gui_enabled=True).validate(action)
         for value in (math.nan, math.inf, -math.inf):
             with self.assertRaises(GuiError):
-                validate_gui_action({'action': 'hold_key', 'key': 'w', 'duration': value}, 120)
+                validate_gui_action({'action': 'hold_key', 'key': 'w', 'duration': value})
 
     def test_keyboard_hidden_by_existing_gui_and_phase_gates(self):
         for flags in ({'gui_enabled': False}, {'gui_enabled': True, 'checkpoint_required': True},
@@ -120,11 +120,11 @@ class KeyboardReleaseTests(unittest.TestCase):
         from tests.test_gui_tools import FakeDisplay, FakeProcess
         from pavlusha_agent.gui import GuiRuntime
         with tempfile.TemporaryDirectory() as tmp:
-            runtime = GuiRuntime(Path(tmp), Path(tmp), max_command_timeout=300, network_allowed=False)
+            runtime = GuiRuntime(Path(tmp), Path(tmp), network_allowed=False)
             runtime.process, runtime.display = FakeProcess(), FakeDisplay()
             for action in ({'action': 'press_key', 'key': 'l', 'modifiers': ['ctrl'], 'delay': 0},
                            {'action': 'hold_key', 'key': 'w', 'duration': .2, 'delay': 0}):
-                kind, data = validate_gui_action(action, 300)
+                kind, data = validate_gui_action(action)
                 result, observation = runtime.execute(kind, data)
                 self.assertEqual(result['key'], action['key'])
                 self.assertIsNone(observation.gesture)

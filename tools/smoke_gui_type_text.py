@@ -96,16 +96,16 @@ def main():
                 submitted.clear()
                 # Fresh session/page gives a genuinely empty textbox for each case.
                 with tempfile.TemporaryDirectory() as work:
-                    with GuiRuntime(Path(work), args.output / str(index), max_command_timeout=120, network_allowed=True) as gui:
+                    with GuiRuntime(Path(work), args.output / str(index), network_allowed=True) as gui:
                         result, _ = gui.start({"command": "pavlusha-browser http://127.0.0.1:8000", "network": True,
-                                               "timeout": 120, "delay": 5})
+                                               "delay": 5})
                         assert result["state"] == "alive", result
                         result, _ = gui.execute("click", {"x": 200, "y": 225, "delay": .2})
                         assert "error" not in result, result
                         chunks = []
                         for offset in range(0, len(expected), 64):
                             chunk = expected[offset:offset + 64]
-                            kind, data = validate_gui_action({"action": "type_text", "text": chunk, "delay": .2}, 120)
+                            kind, data = validate_gui_action({"action": "type_text", "text": chunk, "delay": .2})
                             result, typed = gui.execute(kind, data)
                             assert typed is not None, result
                             chunks.append(chunk)

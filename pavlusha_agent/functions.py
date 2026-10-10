@@ -85,9 +85,6 @@ def validate_json(value, schema, path="value"):
 
 class FunctionRegistry:
     def __init__(self, paths):
-        # Preserve the single-path API as well as the ordered repeatable CLI input.
-        if isinstance(paths, (str, Path)):
-            paths = [paths]
         functions, descriptions, sources, loaded = {}, [], {}, []
         try:
             for path in paths:

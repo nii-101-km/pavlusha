@@ -2,23 +2,12 @@
 
 from __future__ import annotations
 
-import argparse
 from contextlib import contextmanager
 import copy
-import hashlib
 import json
 import math
-import os
-import shutil
-import signal
-import subprocess
-import sys
-import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
-from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from .core import AgentError, ProviderTurn, _trim
@@ -59,7 +48,7 @@ class ChatProvider:
     """OpenAI-compatible chat client; KV lifetime belongs to the backend.
 
     No conversation, prefix snapshot, cache handle or generation is retained.
-    The role-specific entry points keep Manager calls off the Worker path, but
+    The Worker and Expert entry points use independent prompts, but
     do not promise physical KV isolation on a shared LM Studio model instance.
     """
     def __init__(
@@ -270,10 +259,7 @@ class ChatProvider:
         messages: list[dict[str, Any]],
         *,
         response_format: dict[str, Any] | None = None,
-        thinking_budget_tokens: int | None = None,
         reasoning_effort: str | None = None,
-        tools: list[dict[str, Any]] | None = None,
-        tool_choice: str | dict[str, Any] | None = None,
     ) -> ProviderTurn:
         model = self.resolve_model()
         payload: dict[str, Any] = {
@@ -285,14 +271,8 @@ class ChatProvider:
         }
         if response_format is not None:
             payload["response_format"] = response_format
-        if thinking_budget_tokens is not None:
-            payload["thinking_budget_tokens"] = thinking_budget_tokens
         if reasoning_effort is not None:
             payload["reasoning_effort"] = reasoning_effort
-        if tools is not None:
-            payload["tools"] = tools
-        if tool_choice is not None:
-            payload["tool_choice"] = tool_choice
         request = urllib.request.Request(
             self.base_url + "/chat/completions",
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
@@ -340,11 +320,9 @@ class ChatProvider:
         messages: list[dict[str, Any]],
         *,
         on_delta,
+        should_cancel=None,
         response_format: dict[str, Any] | None = None,
-        thinking_budget_tokens: int | None = None,
         reasoning_effort: str | None = None,
-        tools: list[dict[str, Any]] | None = None,
-        tool_choice: str | dict[str, Any] | None = None,
     ) -> ProviderTurn:
         """Stream one turn while reconstructing the same ProviderTurn contract.
 
@@ -360,10 +338,7 @@ class ChatProvider:
             "stream_options": {"include_usage": True},
         }
         if response_format is not None: payload["response_format"] = response_format
-        if thinking_budget_tokens is not None: payload["thinking_budget_tokens"] = thinking_budget_tokens
         if reasoning_effort is not None: payload["reasoning_effort"] = reasoning_effort
-        if tools is not None: payload["tools"] = tools
-        if tool_choice is not None: payload["tool_choice"] = tool_choice
         request = urllib.request.Request(
             self.base_url + "/chat/completions",
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
@@ -378,6 +353,10 @@ class ChatProvider:
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 for raw_line in response:
+                    # Check every SSE line, including tool-only deltas, usage and DONE.
+                    if should_cancel is not None and should_cancel():
+                        interrupted = True
+                        break
                     line = raw_line.decode("utf-8", "replace").strip()
                     if not line or line.startswith(":") or not line.startswith("data:"):
                         continue
@@ -434,26 +413,3 @@ class ChatProvider:
         if interrupted:
             raise WorkerStreamInterrupted(turn)
         return turn
-
-    def complete(
-        self,
-        messages: list[dict[str, Any]],
-        *,
-        response_format: dict[str, Any] | None = None,
-        thinking_budget_tokens: int | None = None,
-        tools: list[dict[str, Any]] | None = None,
-        tool_choice: str | dict[str, Any] | None = None,
-    ) -> str:
-        turn = self.complete_turn(
-            messages,
-            response_format=response_format,
-            thinking_budget_tokens=thinking_budget_tokens,
-            tools=tools,
-            tool_choice=tool_choice,
-        )
-        if not turn.content.strip():
-            raise AgentError(
-                "provider returned empty assistant content"
-                + (f" (finish_reason={turn.finish_reason})" if turn.finish_reason else "")
-            )
-        return turn.content

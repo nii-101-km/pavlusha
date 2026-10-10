@@ -128,7 +128,7 @@ class RuntimeArchitectureTests(unittest.TestCase):
              redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             args = build_parser().parse_args(['--no-interactive', '--no-live', '--no-network', '--project-map', 'off', "--workdir", tmp + "/work", "--state-dir", tmp + "/state",
                                               "--model", "m", "--worker-context-budget", "40000",
-                                              "--raw-reasoning-limit", "999", "--project-review-every", "0", "task"])
+                                              "--project-review-every", "0", "task"])
             self.assertEqual(run_agent(args), 0)
             state = json.loads((Path(tmp) / "state" / "state.json").read_text())
             self.assertNotIn("reasoning_memory", state)

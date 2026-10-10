@@ -89,8 +89,8 @@ while True:
                                       'stack':'GuiRuntime._terminate_process -> os.killpg'})
             return original_killpg(pgid,sig)
         with patch.object(GuiRuntime,'_bwrap_argv',argv), patch('pavlusha_agent.gui.os.killpg',killpg):
-            with GuiRuntime(work,output,max_command_timeout=8 if before else 3,network_allowed=False) as gui:
-                result,obs = gui.start({'command':command,'network':False,'timeout':8 if before else 3,'delay':10 if ocr_work else 5})
+            with GuiRuntime(work,output,network_allowed=False) as gui:
+                result,obs = gui.start({'command':command,'network':False,'delay':10 if ocr_work else 5})
                 report['actions'].append(result)
                 assert result['state']=='alive' and obs is not None,result
                 if ocr_work:
@@ -121,7 +121,7 @@ while True:
                         report['actions'].append(result)
                         assert result['state']=='alive' and obs is not None,result
                         assert gui.process is process and gui.display.server is xserver
-                        shell = run_shell(work,"printf 'intervening shell'; test -s /work/server.log",network=False,timeout=3,output_limit=1000)
+                        shell = run_shell(work,"printf 'intervening shell'; test -s /work/server.log",network=False,timeout=3)
                         assert shell.exit_code==0,shell
                         report.setdefault('shell_turns',[]).append(shell.exit_code)
                 report['elapsed_since_start_return'] = time.monotonic()-started
@@ -168,7 +168,7 @@ while True:
                 report['server_log'] = (work/'server.log').read_text()
                 if not before:
                     for cycle in range(2):
-                        result,obs = gui.start({'command':command,'network':False,'timeout':3,'delay':10 if ocr_work else 5})
+                        result,obs = gui.start({'command':command,'network':False,'delay':10 if ocr_work else 5})
                         assert result['state']=='alive' and obs is not None,result
                         process,xserver,socket = gui.process,gui.display.server,gui.display.socket_path
                         pids = [int(r['pid']) for r in snapshot([process.pid,xserver.pid])]

@@ -109,6 +109,85 @@ class LifecycleTests(unittest.TestCase):
             self.assertEqual(state['project_state']['last_review_operation'], 0)
             self.assertEqual(state['counters']['operation'], 1)
 
+    def test_three_semantically_rejected_updates_stop_before_next_action(self):
+        rejected = turn({'action': 'project_update', 'changes': [
+            {'op': 'update_work', 'id': 'W999', 'status': 'DONE', 'evidence': ['FILE: result.txt']}
+        ]})
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            seen, result, error = run_script(root, [
+                init_turn(), rejected, rejected, rejected,
+                turn({'action': 'shell', 'command': 'must not run'}),
+            ])
+            self.assertEqual(len(seen), 4)
+            self.assertIsNone(result)
+            self.assertEqual(error, 'Project State update was rejected three times in a row')
+            state = StateStore(root/'state', 'task').load()
+            self.assertEqual(state['operations'], [])
+            self.assertEqual([w['status'] for w in state['project_state']['work']], ['ACTIVE', 'PLANNED'])
+
+    def test_malformed_and_semantically_rejected_actions_share_one_limit(self):
+        rejected = turn({'action': 'project_update', 'changes': [
+            {'op': 'update_work', 'id': 'W999', 'reason': 'unknown work item'}
+        ]})
+        malformed = ProviderTurn(content='{"action":', reasoning_content='', finish_reason='stop')
+        for failures, expected in (
+            ([rejected, malformed, rejected], 'Project State update was rejected three times in a row'),
+            ([rejected, rejected, malformed], 'model returned invalid actions three times in a row'),
+        ):
+            with self.subTest(expected=expected), tempfile.TemporaryDirectory() as tmp:
+                seen, result, error = run_script(Path(tmp), [init_turn(), *failures])
+                self.assertEqual(len(seen), 4)
+                self.assertIsNone(result)
+                self.assertEqual(error, expected)
+
+    def test_accepted_shell_or_state_change_resets_rejected_action_limit(self):
+        rejected = turn({'action': 'project_update', 'changes': [
+            {'op': 'update_work', 'id': 'W999', 'reason': 'unknown work item'}
+        ]})
+        accepted = [turn({'action': 'shell', 'command': 'verify'}),
+                    turn({'action': 'project_update', 'changes': [
+                        {'op': 'add_design', 'decision': 'Use current files', 'rationale': 'Inspected'}]})]
+        for action in accepted:
+            with self.subTest(action=action.content), tempfile.TemporaryDirectory() as tmp:
+                seen, result, error = run_script(Path(tmp), [
+                    init_turn(), rejected, rejected, action, rejected, rejected,
+                    done('verified'), turn({'action': 'finish', 'summary': 'done'}),
+                ])
+                self.assertEqual(result, 0, error)
+                self.assertEqual(len(seen), 8)
+
+    def test_repeated_initialization_rejections_reach_limit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            seen, result, error = run_script(Path(tmp), [init_turn() for _ in range(4)])
+            self.assertEqual(len(seen), 4)
+            self.assertIsNone(result)
+            self.assertEqual(error, 'Project State initialization was rejected three times in a row')
+
+    def test_rejected_checkpoints_reach_limit_without_archiving_history(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch('pavlusha_agent.state_store.StateStore.complete_project_review',
+                       side_effect=AgentError('candidate rejected')):
+                seen, result, error = run_script(root, [init_turn(), review(), review(), review()],
+                                                 extra=['--history-high', '1'])
+            self.assertEqual(len(seen), 4)
+            self.assertIsNone(result)
+            self.assertEqual(error, 'Project State review was rejected three times in a row')
+            state = StateStore(root/'state', 'task').load()
+            self.assertEqual(state['recovery_checkpoint']['generation'], 1)
+            self.assertFalse((root/'state/history_archive.jsonl').exists())
+
+    def test_shell_duration_survives_runtime_result_admission_and_persistence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _, result, error = run_script(root, [init_turn(),
+                turn({'action': 'shell', 'command': 'verify'}), done('verified'),
+                turn({'action': 'finish', 'summary': 'done'})])
+            self.assertEqual(result, 0, error)
+            state = StateStore(root/'state', 'task').load()
+            self.assertEqual(state['operations'][0]['duration_seconds'], .01)
+
     def test_count_context_first_and_simultaneous_use_one_checkpoint(self):
         for count, reasoning, expected in [(3, 'SMALL_OLD_REASONING', 'recent history'),
                                            (99, 'x'*27000, 'provider-reported prompt usage'),
@@ -146,7 +225,7 @@ class LifecycleTests(unittest.TestCase):
             self.assertIn('LATEST_HANDOFF', str(seen[6]))
             self.assertNotIn('FIRST_HANDOFF', str(seen[6]))
             state = StateStore(root/'state', 'task').load()
-            self.assertEqual(state['checkpoint_handoff'], 'LATEST_HANDOFF')
+            self.assertEqual(state['recovery_checkpoint']['handoff'], 'LATEST_HANDOFF')
             self.assertNotIn('handoff', state['project_state'])
             self.assertEqual([x['status'] for x in state['project_state']['work']], ['DONE','DONE'])
             self.assertEqual(sum(m['content'].startswith('CHECKPOINT HANDOFF') for m in seen[6]), 1)
@@ -209,7 +288,7 @@ class LifecycleTests(unittest.TestCase):
                     self.fail('child did not terminate')
                 self.assertEqual(process.exitcode,17 if abrupt else 0)
                 before=StateStore(root/'state','task').load()
-                self.assertEqual(before['checkpoint_handoff'],'Verify committed.py next.')
+                self.assertEqual(before['recovery_checkpoint']['handoff'],'Verify committed.py next.')
                 self.assertEqual(before['counters']['operation'],1 if abrupt else 2)
                 def verify_files(work,command):
                     self.assertEqual(command,'verify persisted files')
@@ -246,8 +325,8 @@ class LifecycleTests(unittest.TestCase):
                 with self.assertRaises(OSError):
                     store.complete_project_review(step=3,handoff='new')
             self.assertEqual(store.load(),before)
-            store.complete_project_review(step=4)  # Legacy omission clears, never retains stale text.
-            self.assertEqual(store.load()['checkpoint_handoff'],'')
+            store.complete_project_review(step=4)  # Omission clears the previous handoff.
+            self.assertEqual(store.load()['recovery_checkpoint']['handoff'],'')
 
     def test_restart_after_publication_before_history_archive(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -257,7 +336,7 @@ class LifecycleTests(unittest.TestCase):
                     run_script(root,[init_turn(),done('verified'),review('COMMITTED_HANDOFF')],
                                extra=['--history-high','2'])
             state=StateStore(root/'state','task').load()
-            self.assertEqual(state['checkpoint_handoff'],'COMMITTED_HANDOFF')
+            self.assertEqual(state['recovery_checkpoint']['handoff'],'COMMITTED_HANDOFF')
             seen,result,error=run_script(root,[turn({'action':'finish','summary':'recovered'})])
             self.assertEqual(result,0,error)
             self.assertIn('COMMITTED_HANDOFF',str(seen[0]))
@@ -278,11 +357,11 @@ class LifecycleTests(unittest.TestCase):
                 self.assertEqual(run.call_args.args[0].max_steps,int(limit))
 
     def test_prompt_budget_uses_actual_capacity_and_provider_usage(self):
-        budget=PromptBudget(20000,2000,0.9)
+        budget=PromptBudget(20000,0.9)
         self.assertEqual(budget.high, 18000)
-        budget.observe([], 16000)
+        budget.observe(16000)
         self.assertFalse(budget.needs_checkpoint())
-        budget.observe([], 18000)
+        budget.observe(18000)
         self.assertTrue(budget.needs_checkpoint())
         budget.reset()
         self.assertIsNone(budget.measured)

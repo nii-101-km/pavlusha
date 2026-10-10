@@ -6,6 +6,24 @@ import unittest
 from pavlusha_agent.live import LiveConsoleRenderer
 
 
+class ReasoningDiagnosticsTests(unittest.TestCase):
+    def test_default_is_compact_and_diagnostics_are_opt_in(self):
+        from pavlusha_agent.reasoning_loop import LoopSignal
+        suspected = LoopSignal(800, 560, 0, .8, 560, 1, False)
+        confirmed = LoopSignal(840, 600, 40, .85, 560, 2, True)
+        for diagnostics in (False, True):
+            stream = io.StringIO()
+            renderer = LiveConsoleRenderer(stream=stream, color=False,
+                                           reasoning_loop_diagnostics=diagnostics)
+            renderer.reasoning_loop(suspected, mode="recover", attempt=0)
+            if not diagnostics:
+                self.assertEqual(stream.getvalue(), "")
+            renderer.reasoning_loop(confirmed, mode="recover", attempt=0)
+            self.assertIn("REASONING LOOP", stream.getvalue())
+            self.assertEqual("similarity" in stream.getvalue(), diagnostics)
+            self.assertEqual("distance" in stream.getvalue(), diagnostics)
+
+
 class ProjectStateLiveRenderingTests(unittest.TestCase):
     def test_project_update_renders_worker_selected_evidence(self):
         stream = io.StringIO()

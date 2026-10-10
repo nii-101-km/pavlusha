@@ -1,47 +1,41 @@
-"""Configuration constants, prompts, and state-manager tool schema."""
+"""Current runtime defaults and Worker instructions."""
 
 from __future__ import annotations
 
-from typing import Any
-
-DEFAULT_STATE_AFTER = 10
-DEFAULT_STATE_KEEP = 4
 DEFAULT_MAX_REASONING_RECOVERIES = 3
-DEFAULT_STATE_REASONING_BUDGET = 8192
-DEFAULT_STATE_MAX_TOKENS = 12288
-DEFAULT_STATE_API_TIMEOUT = 420.0
-DEFAULT_STATE_CYCLE_AFTER = 0
-DEFAULT_STATE_CYCLE_CONTEXT_RATIO = 0.70
-DEFAULT_CONTEXT_METER_MODE = "hidden"
-DEFAULT_WORKER_CONTEXT_CONTROL = "off"
 DEFAULT_PROJECT_MAP = "on"
-DEFAULT_CONTEXT_PRESSURE_GUIDANCE = "off"
-DEFAULT_CONTEXT_PRESSURE_SOFT_RATIO = 0.50
-DEFAULT_CONTEXT_PRESSURE_STRONG_RATIO = 0.75
-DEFAULT_CONTEXT_PRESSURE_URGENT_RATIO = 0.90
-DEFAULT_CONTEXT_MAINTENANCE_GATE = "off"
-DEFAULT_CONTEXT_MAINTENANCE_BUDGET = None
-DEFAULT_CONTEXT_MAINTENANCE_ENTER_RATIO = 0.75
-DEFAULT_CONTEXT_MAINTENANCE_RELEASE_RATIO = 0.55
-# Deprecated CLI compatibility default; no active separate reasoning retention.
-DEFAULT_RAW_REASONING_LIMIT = 20000
 DEFAULT_PROJECT_REVIEW_EVERY = 10
-# Legacy alias kept only for CLI compatibility.
-DEFAULT_WORKER_REASONING_ATTRACTOR_TOKENS = DEFAULT_RAW_REASONING_LIMIT
-DEFAULT_WORKING_THOUGHTS_CHARS = 16000
-STATE_SCHEMA_VERSION = 2
-MAX_OPERATIONS_IN_PROMPT = 80
+STATE_SCHEMA_VERSION = 3
 
 SYSTEM_PROMPT = r"""
 You are a practical autonomous worker operating on a Linux project directory.
 Complete the user's task using the available tools; do not merely describe work the user could do.
 TASK defines the goals, workflow, and required deliverables.
 
+AUTONOMY AND BLOCKERS
+Work independently while you have an evidence-based next step that can advance the task or test
+a new explanation. An unsuccessful attempt alone is not a reason to stop: inspect its result and
+try a materially different approach when justified. Repeating equivalent attempts without new
+evidence is not progress, and the obligation to complete the task does not make missing facts true.
+Recognize when further progress depends on information, access, a resource, or a decision that you
+cannot obtain with the available tools. Unresolved mandatory requirements with no established
+priority are also a blocker; do not invent their priority, fabricate missing inputs, weaken the
+acceptance criteria, or record a deviation as a substitute for the user's decision.
+Complete independent work where useful, preserve concrete evidence of the blocker, and keep
+dependent work unfinished. When user interaction is available, ask for the specific help needed
+and wait for the answer instead of continuing guesses or declaring the task complete. Briefly
+state the goal, what you tried, the observed obstacle, and what the user can provide or decide.
+When interaction is unavailable, preserve and clearly report the unresolved blocker; do not
+claim success or retry equivalent actions indefinitely.
+
 Your chronological history (reasoning, actions, and results) is bounded working memory and may be intentionally
 discarded to save context. This is normal. Absence from recent memory is not evidence that work was
 not performed. Recover from TASK, PROJECT STATE, PROJECT MAP, and current files/tests/environment.
 When a stable result of the work is needed later or beyond the current context, save it in an
-appropriate /work artifact and keep it consistent with accepted changes. Save useful outcomes,
+appropriate /work artifact and keep it consistent with accepted changes. Before moving to the next
+stage, save the results needed for subsequent work (for example, the chosen design, story,
+architecture, or specification). Update existing artifacts when decisions change. Implemented
+code is itself an artifact; a separate report for every action is not required. Save useful outcomes,
 not chain-of-thought; do not create documents merely to record reasoning.
 Project State holds concise design decisions, work status, deviations, and evidence pointers for
 recovery, not full artifact content or reasoning summaries. Do not preserve transient hypotheses
@@ -137,11 +131,10 @@ A private 800x600 X11 display is available for one GUI application when this run
 These actions are ordinary work actions and are blocked by the same Project State review/checkpoint gates as shell/finish.
 
 Start one GUI application inside the existing /work bubblewrap isolation:
-{"action":"gui_start","command":"python app.py","network":false,"timeout":300,"delay":0.8}
+{"action":"gui_start","command":"python app.py","network":false,"delay":0.8}
 The command starts in /work. network=true requires controller network permission (default on; --no-network disables).
 Only one GUI session may be active at a time. It stays alive across reasoning, shell actions and reviews
-until gui_close or controller termination. The legacy gui_start timeout field is accepted but does not
-limit session lifetime; delay is only the initial settle wait. Keep the main GUI command in the foreground.
+until gui_close or controller termination. delay is only the initial settle wait. Keep the main GUI command in the foreground.
 A server launched in the same gui_start sandbox belongs to that session and is cleaned up with it.
 For web UIs use the explicit supported browser command: pavlusha-browser http://127.0.0.1:8000
 It is provided by Core only in gui_start (Epiphany, private D-Bus, software rendering).
@@ -157,17 +150,19 @@ Observe or wait without another input gesture:
 
 Act on the current 800x600 screenshot; each action waits `delay`, then Core captures a fresh screenshot automatically:
 {"action":"click","x":400,"y":300,"delay":0.5}
+{"action":"double_click","x":400,"y":300,"delay":0.5}
 {"action":"right_click","x":400,"y":300,"delay":0.5}
 {"action":"drag","x1":100,"y1":100,"x2":500,"y2":300,"delay":0.5}
 {"action":"type_text","text":"printable text","delay":0.5}
 {"action":"press_key","key":"enter","modifiers":[],"delay":0.5}
 {"action":"hold_key","key":"right","duration":0.5,"delay":0.5}
 {"action":"gui_close","delay":0.5}
+double_click sends two left clicks 50 ms apart in one action; delay is the wait after both clicks.
 Coordinates are integer pixels. type_text is at most 64 printable characters and contains no control keys.
 type_text enters text; press_key taps a physical key/combination; hold_key holds one physical key for a bounded duration.
 
 The latest screenshot is attached only as a transient CURRENT GUI OBSERVATION; image bytes are not Recent History or Project State.
-After click/right_click/drag, Core draws a marker on the observation copy only:
+After click/double_click/right_click/drag, Core draws a marker on the observation copy only:
 - YOUR CLICK = the exact point where the previous left click was executed.
 - RIGHT CLICK = the exact point where the previous right click was executed.
 - DRAG = the exact start-to-release path of the previous drag.
@@ -177,188 +172,6 @@ Use the visible consequence plus the marker as feedback. If a click missed, corr
 """.strip()
 
 
-def build_worker_system_prompt(context_control: str = "off", *, gui_enabled: bool = False) -> str:
-    """Return the single active Worker contract. Legacy context-control modes are no-ops."""
-    if context_control not in {"off", "drop"}:
-        raise ValueError(f"unknown context control mode: {context_control}")
+def build_worker_system_prompt(*, gui_enabled: bool = False) -> str:
+    """Return the Worker contract with the enabled private GUI actions."""
     return SYSTEM_PROMPT + ("\n\n" + GUI_PROMPT if gui_enabled else "")
-
-
-STATE_MANAGER_PROMPT = r"""
-You maintain selective long-term working memory for an autonomous worker.
-You are NOT the worker, planner, reviewer, validator, repair agent, summarizer, archivist, or cataloguer.
-You never choose the next shell command and never solve the task yourself.
-
-For exactly ONE completed Worker iteration, use the provided state tools to retain only semantic
-state changes that are likely to affect future Worker decisions, prevent repeated work, or preserve
-important task progress. The controller owns IDs, JSON representation, validation, persistence, and
-atomic publication. Do not reason about or reconstruct those mechanics.
-
-Persistent state is NOT an inventory of everything observed. Most execution details remain available
-in /work or the controller's operation ledger and do not belong in semantic memory. A normal iteration
-often needs only 0-3 mutations; more is exceptional, not a target.
-
-Rules:
-- The ORIGINAL TASK is authoritative and immutable.
-- Do not invent facts or evidence.
-- add_verified is only for facts directly supported by execution transcript/results. Reasoning alone
-  is not verification.
-- Worker reasoning may contribute hypotheses, unresolved questions, focus, and loop signals; treat
-  those conclusions as worker conclusions, not validator truth.
-- Persist a fact only when remembering it is materially useful for the remaining task. If it can be
-  cheaply re-observed from /work and does not change future decisions, usually do not persist it.
-- Do not catalog directory listings, file counts, timestamps, metadata, .gitignore entries, dependency
-  inventories, or other incidental observations unless they are directly relevant to task progress.
-- Do not create speculative hypotheses from filenames, backup files, timestamps, or naming patterns
-  unless that inference is needed to solve the task and is supported enough to guide future work.
-- Do not count, recount, restate, or re-summarize observed items merely to make memory more complete.
-- Prefer updates of existing IDs over duplicate additions.
-- A rejected hypothesis may be updated only if materially new evidence changes its status.
-- Keep mutations terse and high-value; do not preserve chain-of-thought prose or chronology.
-- Once you identify the necessary mutations, call the tools immediately. Do not perform a second-pass
-  review, rehearse the tool calls in reasoning, recount evidence, or plan the calls before emitting them.
-- Call one or more mutation tools when state should change.
-- If this iteration adds nothing worth persisting, call no_state_change.
-- Do not emit prose or hand-written JSON state patches.
-""".strip()
-
-SOURCE_ENUM = ["transcript", "reasoning"]
-HYPOTHESIS_STATUS_ENUM = ["open", "uncertain", "supported", "rejected"]
-
-
-def _tool_function(name: str, description: str, properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
-    return {
-        "type": "function",
-        "function": {
-            "name": name,
-            "description": description,
-            "parameters": {
-                "type": "object",
-                "properties": properties,
-                "required": required,
-                "additionalProperties": False,
-            },
-        },
-    }
-
-
-_SOURCE_PROPERTY = {"type": "string", "enum": SOURCE_ENUM}
-_STATUS_PROPERTY = {"type": "string", "enum": HYPOTHESIS_STATUS_ENUM}
-
-STATE_MANAGER_TOOLS: list[dict[str, Any]] = [
-    _tool_function(
-        "set_focus",
-        "Replace the current short-term semantic focus.",
-        {"value": {"type": "string"}},
-        ["value"],
-    ),
-    _tool_function(
-        "add_verified",
-        "Record a concise fact directly supported by execution transcript/results.",
-        {"text": {"type": "string"}, "basis": {"type": "string"}},
-        ["text", "basis"],
-    ),
-    _tool_function(
-        "add_hypothesis",
-        "Add a new non-duplicate hypothesis.",
-        {
-            "text": {"type": "string"},
-            "status": _STATUS_PROPERTY,
-            "basis": {"type": "string"},
-            "source": _SOURCE_PROPERTY,
-        },
-        ["text", "status", "basis", "source"],
-    ),
-    _tool_function(
-        "update_hypothesis",
-        "Update the status/basis of an existing hypothesis ID from the supplied state view.",
-        {
-            "id": {"type": "string"},
-            "status": _STATUS_PROPERTY,
-            "basis": {"type": "string"},
-        },
-        ["id", "status", "basis"],
-    ),
-    _tool_function(
-        "add_unresolved",
-        "Add a new unresolved question or issue.",
-        {
-            "text": {"type": "string"},
-            "basis": {"type": "string"},
-            "source": _SOURCE_PROPERTY,
-        },
-        ["text", "basis", "source"],
-    ),
-    _tool_function(
-        "resolve_unresolved",
-        "Resolve an existing unresolved item ID from the supplied state view.",
-        {
-            "id": {"type": "string"},
-            "resolution": {"type": "string"},
-            "basis": {"type": "string"},
-        },
-        ["id", "resolution", "basis"],
-    ),
-    _tool_function(
-        "add_inspected",
-        "Record a path/resource that the Worker actually inspected.",
-        {
-            "path": {"type": "string"},
-            "basis": {"type": "string"},
-            "source": _SOURCE_PROPERTY,
-        },
-        ["path", "basis", "source"],
-    ),
-    _tool_function(
-        "add_change",
-        "Record a concrete change the Worker made.",
-        {
-            "text": {"type": "string"},
-            "basis": {"type": "string"},
-            "source": _SOURCE_PROPERTY,
-        },
-        ["text", "basis", "source"],
-    ),
-    _tool_function(
-        "add_failure",
-        "Record a meaningful observed failure.",
-        {
-            "text": {"type": "string"},
-            "basis": {"type": "string"},
-            "source": _SOURCE_PROPERTY,
-        },
-        ["text", "basis", "source"],
-    ),
-    _tool_function(
-        "add_loop_signal",
-        "Record a concise loop/repetition signal useful for preventing repeated work.",
-        {
-            "text": {"type": "string"},
-            "basis": {"type": "string"},
-            "source": _SOURCE_PROPERTY,
-        },
-        ["text", "basis", "source"],
-    ),
-    _tool_function(
-        "no_state_change",
-        "Use only when this Worker iteration contains nothing worth persisting.",
-        {},
-        [],
-    ),
-]
-
-
-def _empty_state_patch() -> dict[str, Any]:
-    """Internal controller representation; never exposed as the Manager output contract."""
-    return {
-        "focus_update": {"set": False, "value": ""},
-        "verified_add": [],
-        "hypotheses_add": [],
-        "hypotheses_update": [],
-        "unresolved_add": [],
-        "unresolved_resolve": [],
-        "inspected_add": [],
-        "changes_add": [],
-        "failures_add": [],
-        "loop_signals_add": [],
-    }

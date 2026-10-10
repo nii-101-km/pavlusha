@@ -66,8 +66,9 @@ class ChronologicalReasoningProjectCheckpointTests(unittest.TestCase):
             state = store.load()
             logs = [json.loads(x) for x in store.log_path.read_text().splitlines()]
             archive = []
-            if store.reasoning_archive_path.exists():
-                archive = [json.loads(x) for x in store.reasoning_archive_path.read_text().splitlines()]
+            archive_path = state_dir / "reasoning_archive.jsonl"
+            if archive_path.exists():
+                archive = [json.loads(x) for x in archive_path.read_text().splitlines()]
         return {"code": code, "error": error, "workers": workers, "state": state, "logs": logs, "archive": archive}
 
     def test_initial_plan_gate_rejects_single_item_permission_slip(self):
@@ -85,7 +86,7 @@ class ChronologicalReasoningProjectCheckpointTests(unittest.TestCase):
             ]}),
             turn({"action": "finish", "summary": "done"}),
         ]
-        result = self.run_case(turns, extra=["--raw-reasoning-limit", "999"])
+        result = self.run_case(turns, extra=[])
         self.assertEqual(result["code"], 0)
         self.assertIn("at least two concrete plan items", str(result["workers"][1]))
         self.assertEqual(len(result["state"]["project_state"]["work"]), 2)
@@ -103,7 +104,7 @@ class ChronologicalReasoningProjectCheckpointTests(unittest.TestCase):
             ]}),
             turn({"action": "finish", "summary": "done"}),
         ]
-        result = self.run_case(turns, extra=["--raw-reasoning-limit", "999"])
+        result = self.run_case(turns, extra=[])
         self.assertEqual(result["code"], 0)
         self.assertNotIn("PROJECT UPDATE REJECTED", str(result["workers"][3]))
         self.assertEqual(result["state"]["project_state"]["work"][0]["evidence"],
@@ -118,7 +119,7 @@ class ChronologicalReasoningProjectCheckpointTests(unittest.TestCase):
                   "evidence": material_evidence("echo one")}]}, reasoning="PLAN_C", tokens=2),
             turn({"action": "finish", "summary": "done"}, reasoning="PLAN_D", tokens=2),
         ]
-        result = self.run_case(turns, extra=["--raw-reasoning-limit", "100"])
+        result = self.run_case(turns, extra=[])
         self.assertEqual(result["code"], 0)
         self.assertIn("PLAN_A", str(result["workers"][1]))
         self.assertIn("PLAN_B", str(result["workers"][2]))
@@ -126,7 +127,7 @@ class ChronologicalReasoningProjectCheckpointTests(unittest.TestCase):
         self.assertFalse(result["archive"])
         self.assertFalse(any(e["kind"].startswith("state_cycle") for e in result["logs"]))
 
-    def test_legacy_raw_limit_does_not_split_retention_or_force_review(self):
+    def test_reasoning_actions_and_results_retain_chronological_order(self):
         turns = [
             init_turn(reasoning="R_INIT", tokens=100),
             turn({"action": "shell", "command": "echo one"}, reasoning="R_ONE", tokens=100),
@@ -137,7 +138,7 @@ class ChronologicalReasoningProjectCheckpointTests(unittest.TestCase):
             ]}),
             turn({"action": "finish", "summary": "done"}),
         ]
-        result = self.run_case(turns, extra=["--raw-reasoning-limit", "1"])
+        result = self.run_case(turns, extra=[])
         self.assertEqual(result["code"], 0)
         self.assertEqual([op["command"] for op in result["state"]["operations"]], ["echo one", "echo two"])
         self.assertFalse(result["archive"])
@@ -163,7 +164,7 @@ class ChronologicalReasoningProjectCheckpointTests(unittest.TestCase):
                   "evidence": material_evidence("echo three")}]}, tokens=1),
             turn({"action": "finish", "summary": "done"}),
         ]
-        result = self.run_case(turns, extra=["--raw-reasoning-limit", "999", "--project-review-every", "2"])
+        result = self.run_case(turns, extra=["--project-review-every", "2"])
         self.assertEqual(result["code"], 0)
         self.assertEqual([op["command"] for op in result["state"]["operations"]], ["echo one", "echo two", "echo three"])
         self.assertIn("PERIODIC PROJECT STATE REVIEW", str(result["workers"][3]))
@@ -180,7 +181,7 @@ class ChronologicalReasoningProjectCheckpointTests(unittest.TestCase):
                   "evidence": material_evidence("echo verified")}]}, tokens=1),
             turn({"action": "finish", "summary": "done"}),
         ]
-        result = self.run_case(turns, extra=["--raw-reasoning-limit", "999"])
+        result = self.run_case(turns, extra=[])
         self.assertEqual(result["code"], 0)
         self.assertIn("FINISH REJECTED", str(result["workers"][2]))
 

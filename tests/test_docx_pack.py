@@ -56,7 +56,7 @@ def fixture(path):
 class RegistryTests(unittest.TestCase):
     def test_only_four_public_functions_and_supported_signatures(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(sys, 'argv', ['agent.py', '--workdir', tmp]):
-            registry = FunctionRegistry(PACK)
+            registry = FunctionRegistry([PACK])
             self.assertEqual(list(registry.functions), ['docx_inspect', 'docx_read', 'docx_edit', 'docx_render'])
             self.assertEqual([d['name'] for d in registry.descriptions], list(registry.functions))
 
@@ -233,7 +233,7 @@ class DocxPackTests(unittest.TestCase):
         document.save(self.root / 'transport.docx')
         revision = self.pack.docx_inspect('transport.docx')['revision']
         with patch.object(sys, 'argv', ['agent.py', '--workdir', str(self.root), '--output-limit', '12000']):
-            registry = FunctionRegistry(PACK)
+            registry = FunctionRegistry([PACK])
         globals_ = registry.functions['docx_read'][0].__globals__
         action = {'action': 'call_function', 'name': 'docx_read',
                   'arguments': {'path': 'transport.docx', 'revision': revision, 'max_chars': 12000}}
@@ -246,7 +246,7 @@ class DocxPackTests(unittest.TestCase):
             with self.subTest(runtime_limit=runtime_limit, max_chars=max_chars), \
                  patch.object(sys, 'argv', ['agent.py', '--workdir', str(self.root),
                                           '--output-limit', str(runtime_limit)]):
-                registry = FunctionRegistry(PACK)
+                registry = FunctionRegistry([PACK])
                 arguments = {'path': 'transport.docx', 'revision': revision, 'max_chars': max_chars}
                 parts = []
                 for _ in range(200):
@@ -271,7 +271,7 @@ class DocxPackTests(unittest.TestCase):
 
     def test_read_empty_selection_and_unfittable_metadata_are_admitted(self):
         with patch.object(sys, 'argv', ['agent.py', '--workdir', str(self.root), '--output-limit', '1000']):
-            registry = FunctionRegistry(PACK)
+            registry = FunctionRegistry([PACK])
         def call(**options):
             reply = registry.call({'action': 'call_function', 'name': 'docx_read',
                                    'arguments': {'path': 'brief.docx', 'revision': self.rev, **options}}, 1000)
@@ -653,7 +653,7 @@ class DocxPackTests(unittest.TestCase):
                 ['agent.py', '--workdir', str(self.root), '--functions', str(PACK), '--output-limit', '12000']):
             os.environ.pop('PAVLUSHA_DOCX_RENDERER', None)
             os.environ.pop('PAVLUSHA_DOCX_PYTHON', None)
-            registry = FunctionRegistry(PACK)
+            registry = FunctionRegistry([PACK])
         self.assertIsNone(registry.functions['docx_render'][0].__globals__['_RENDERER'])
         def call(name, **arguments):
             reply = registry.call({'action': 'call_function', 'name': name, 'arguments': arguments}, 12000)

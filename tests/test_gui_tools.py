@@ -8,6 +8,7 @@ import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from PIL import Image
 
@@ -19,7 +20,7 @@ from pavlusha_agent.gui import (
     annotate_png,
     validate_gui_action,
 )
-from pavlusha_agent.gui_helper import click as helper_click, drag as helper_drag, right_click as helper_right_click
+from pavlusha_agent.gui_helper import double_click as helper_double_click, click as helper_click, drag as helper_drag, right_click as helper_right_click
 
 
 def png_fixture() -> bytes:
@@ -38,21 +39,22 @@ class GuiValidationTests(unittest.TestCase):
                     self.assertEqual(build_parser().parse_args([*interactive, *flags, 'task']).gui, expected)
 
     def test_public_shapes_and_delay_defaults(self):
-        kind, data = validate_gui_action({"action": "click", "x": 10, "y": 20}, 300)
+        kind, data = validate_gui_action({"action": "click", "x": 10, "y": 20})
         self.assertEqual(kind, "click")
         self.assertEqual(data["delay"], 0.5)
-        kind, data = validate_gui_action({"action": "view_gui", "delay": 3}, 300)
+        kind, data = validate_gui_action({"action": "view_gui", "delay": 3})
         self.assertEqual(kind, "view_gui")
         self.assertEqual(data["delay"], 3.0)
         kind, data = validate_gui_action(
-            {"action": "gui_start", "command": "python app.py", "timeout": 9999}, 120
+            {"action": "gui_start", "command": "python app.py"}
         )
         self.assertEqual(kind, "gui_start")
-        self.assertEqual(data["timeout"], 120)
+        self.assertNotIn("timeout", data)
         self.assertFalse(data["network"])
 
     def test_bounds_and_exact_fields(self):
         bad = [
+            {"action": "gui_start", "command": "app", "timeout": 30},
             {"action": "click", "x": 800, "y": 1},
             {"action": "click", "x": True, "y": 1},
             {"action": "right_click", "x": 1, "y": 600},
@@ -66,7 +68,7 @@ class GuiValidationTests(unittest.TestCase):
         for action in bad:
             with self.subTest(action=action):
                 with self.assertRaises(GuiError):
-                    validate_gui_action(action, 300)
+                    validate_gui_action(action)
 
 
 class AnnotationTests(unittest.TestCase):
@@ -115,7 +117,7 @@ class GuiRuntimeTests(unittest.TestCase):
     def test_post_action_capture_has_only_latest_gesture(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            runtime = GuiRuntime(root / "work", root / "state", max_command_timeout=300, network_allowed=False)
+            runtime = GuiRuntime(root / "work", root / "state", network_allowed=False)
             runtime.process = FakeProcess()
             runtime.display = FakeDisplay()
             result, obs = runtime.execute("click", {"x": 12, "y": 34, "delay": 0.0})
@@ -135,9 +137,9 @@ class GuiRuntimeTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            runtime = GuiRuntime(root / "work", root / "state", max_command_timeout=300, network_allowed=False)
+            runtime = GuiRuntime(root / "work", root / "state", network_allowed=False)
             (root / "work").mkdir(exist_ok=True)
-            data = {"command": "python app.py", "network": False, "timeout": 30, "delay": 0.0}
+            data = {"command": "python app.py", "network": False, "delay": 0.0}
             with patch("pavlusha_agent.gui.PrivateDisplay.__enter__", side_effect=GuiError("xvfb failed")):
                 result, observation = runtime.start(data)
             self.assertEqual(result["state"], "not_started")
@@ -151,7 +153,7 @@ class GuiRuntimeTests(unittest.TestCase):
             root = Path(tmp)
             work = root / "work"
             work.mkdir()
-            runtime = GuiRuntime(work, root / "state", max_command_timeout=300, network_allowed=False)
+            runtime = GuiRuntime(work, root / "state", network_allowed=False)
             auth = root / "auth"
             auth.write_text("x")
             runtime.display = SimpleNamespace(
@@ -177,7 +179,7 @@ class GuiRuntimeTests(unittest.TestCase):
     def test_gui_close_releases_display_even_if_application_already_exited(self):
         from unittest.mock import Mock, MagicMock
         with tempfile.TemporaryDirectory() as tmp:
-            runtime = GuiRuntime(Path(tmp), Path(tmp), max_command_timeout=30, network_allowed=False)
+            runtime = GuiRuntime(Path(tmp), Path(tmp), network_allowed=False)
             display = MagicMock()
             runtime.display = display
             runtime.process = Mock(poll=Mock(return_value=0))
@@ -235,9 +237,9 @@ class BrowserSandboxRegressionTests(unittest.TestCase):
         thread.start()
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                with GuiRuntime(Path(tmp), Path(tmp) / "state", max_command_timeout=90, network_allowed=True) as runtime:
+                with GuiRuntime(Path(tmp), Path(tmp) / "state", network_allowed=True) as runtime:
                     result, _ = runtime.start({"command": f"pavlusha-browser http://127.0.0.1:{server.server_port}",
-                                              "network": True, "timeout": 90, "delay": 5})
+                                              "network": True, "delay": 5})
                     self.assertEqual(result["state"], "alive", result)
                     self.assertTrue(loaded.wait(5), "browser did not load test form")
                     runtime.execute("view_gui", {"delay": 1})
@@ -253,7 +255,7 @@ class BrowserSandboxRegressionTests(unittest.TestCase):
                                 # Preserve the existing public 64-character action limit.
                                 for offset in range(0, len(expected), 64):
                                     kind, data = validate_gui_action({"action": "type_text", "text": expected[offset:offset + 64],
-                                                                     "delay": .2}, 90)
+                                                                     "delay": .2})
                                     result, obs = runtime.execute(kind, data)
                                     self.assertEqual(result["state"], "alive", result)
                                     self.assertIsNotNone(obs, result)
@@ -277,16 +279,20 @@ class BrowserSandboxRegressionTests(unittest.TestCase):
         import threading
         from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
         received = threading.Event()
+        doubled = threading.Event()
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
                 if self.path == "/clicked":
                     received.set()
+                if self.path == "/doubled":
+                    doubled.set()
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html")
                 self.end_headers()
                 self.wfile.write(b'''<body style="background:#ff0000">
                     <button style="position:absolute;left:50px;top:50px;width:200px;height:100px"
+                    ondblclick="fetch('/doubled')"
                     onclick="document.body.style.background='#00ff00';fetch('/clicked')">Click</button>''')
 
             def log_message(self, *_args):
@@ -297,10 +303,10 @@ class BrowserSandboxRegressionTests(unittest.TestCase):
         thread.start()
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                with GuiRuntime(Path(tmp), Path(tmp) / "state", max_command_timeout=30, network_allowed=True) as runtime:
+                with GuiRuntime(Path(tmp), Path(tmp) / "state", network_allowed=True) as runtime:
                     result, before = runtime.start({
                         "command": f"pavlusha-browser http://127.0.0.1:{server.server_port}",
-                        "network": True, "timeout": 30, "delay": 5,
+                        "network": True, "delay": 5,
                     })
                     self.assertEqual(result["state"], "alive", result)
                     self.assertEqual(Image.open(io.BytesIO(before.clean_png)).getpixel((400, 400)), (255, 0, 0))
@@ -312,6 +318,9 @@ class BrowserSandboxRegressionTests(unittest.TestCase):
                     self.assertEqual(Image.open(io.BytesIO(after.clean_png)).getpixel((400, 400)), (0, 255, 0))
                     self.assertIn("YOUR CLICK", after.message()["content"][0]["text"])
                     self.assertNotEqual(after.clean_png, after.observation_png)
+                    result, double_obs = runtime.execute("double_click", {"x": 100, "y": 150, "delay": 1})
+                    self.assertTrue(doubled.wait(1), "double click did not deliver dblclick")
+                    self.assertIn("DOUBLE CLICK", double_obs.message()["content"][0]["text"])
                     result, _ = runtime.execute("gui_close", {"delay": .5})
                     self.assertEqual(result["state"], "closed", result)
                     self.assertIsNotNone(process.poll())
@@ -337,10 +346,10 @@ class BrowserSandboxRegressionTests(unittest.TestCase):
                 argv[at:at] = ["--ro-bind", str(missing), "/usr/bin/epiphany"]
                 return argv
 
-            with GuiRuntime(root, root / "state", max_command_timeout=30, network_allowed=False) as runtime:
+            with GuiRuntime(root, root / "state", network_allowed=False) as runtime:
                 with patch.object(GuiRuntime, "_bwrap_argv", masked):
                     result, obs = runtime.start({"command": "pavlusha-browser http://127.0.0.1:8000",
-                                                 "network": False, "timeout": 30, "delay": 2})
+                                                 "network": False, "delay": 2})
                 self.assertEqual(result["exit_code"], 127, result)
                 self.assertIn("missing /usr/bin/epiphany", result["stderr_tail"])
                 self.assertIn("Do not search", result["stderr_tail"])
@@ -362,6 +371,18 @@ class PrivateDisplaySmokeTests(unittest.TestCase):
 
 
 class HelperReleaseTests(unittest.TestCase):
+    def test_double_click_sends_two_presses_and_releases(self):
+        events = []
+        X = SimpleNamespace(MotionNotify=1, ButtonPress=2, ButtonRelease=3)
+        d = SimpleNamespace(sync=lambda: None)
+        xtest = SimpleNamespace(fake_input=lambda _d, kind, *args, **kw: events.append(kind))
+        with patch("pavlusha_agent.gui_helper.time.sleep") as sleep:
+            helper_double_click(d, X, xtest, {"x": 5, "y": 6})
+        self.assertEqual(events, [1, 2, 3, 1, 2, 3])
+        sleep.assert_called_once_with(.05)
+        self.assertEqual(validate_gui_action({"action": "double_click", "x": 5, "y": 6})[0],
+                         "double_click")
+
     def test_left_click_releases_after_sync_failure(self):
         events = []
         X = SimpleNamespace(MotionNotify=1, ButtonPress=2, ButtonRelease=3)

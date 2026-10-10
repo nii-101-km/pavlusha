@@ -13,7 +13,9 @@ from . import __version__
 class LiveConsoleRenderer:
     """Append-only renderer. It never owns or changes runtime state."""
 
-    def __init__(self, *, stream: TextIO | None = None, color: bool | None = None) -> None:
+    def __init__(self, *, stream: TextIO | None = None, color: bool | None = None,
+                 reasoning_loop_diagnostics: bool = False) -> None:
+        self.reasoning_loop_diagnostics = reasoning_loop_diagnostics
         self.stream = stream or sys.stderr
         self.color = bool(self.stream.isatty() and color is not False
                           and "NO_COLOR" not in os.environ and os.getenv("TERM") != "dumb")
@@ -134,7 +136,7 @@ class LiveConsoleRenderer:
         self._close_streams()
         self._line(self._paint("warning", text))
 
-    def step(self, step: int, max_steps: int, **legacy_telemetry: Any) -> None:
+    def step(self, step: int, max_steps: int) -> None:
         self._close_streams()
         self._line()
         self._line(self._paint("heading", f"━━ STEP {step}/{max_steps} ━━"))
@@ -167,6 +169,13 @@ class LiveConsoleRenderer:
         self._content_open = False
 
     def reasoning_loop(self, signal: Any, *, mode: str, attempt: int) -> None:
+        if not self.reasoning_loop_diagnostics:
+            if signal.confirmed:
+                self._close_streams()
+                message = (f"REASONING LOOP · restarting generation ({attempt + 1})"
+                           if mode == "recover" else "REASONING LOOP · observation only")
+                self._line(f"  {message}")
+            return
         if not signal.confirmed and not signal.consecutive_matches and signal.word_count % 240:
             return
         self._close_streams()
@@ -188,12 +197,6 @@ class LiveConsoleRenderer:
         pct = f" · {100.0 * prompt / context_budget:.1f}%" if prompt is not None else ""
         self._line(self._paint("metadata", f"  └─ prompt {p}/{context_budget}{pct} · completion {c} · reasoning {r}"))
 
-    def gate(self, event: str, *, managed: int, budget: int, detail: str = "") -> None:
-        self._close_streams()
-        pct = 100.0 * managed / budget if budget else 0.0
-        label = self._paint("warning", "CONTEXT")
-        suffix = f" · {detail}" if detail else ""
-        self._line(f"{self._stamp()}  {label}  gate {event.upper()} · replaceable {managed}/{budget} ({pct:.1f}%){suffix}")
 
     def action(self, kind: str, data: dict[str, Any]) -> None:
         self._close_streams()
@@ -201,10 +204,6 @@ class LiveConsoleRenderer:
             net = "net" if data.get("network") else "offline"
             self._line(f"{self._stamp()}  {self._paint('shell', 'SHELL')} [{net}]")
             self._line("  $ " + self._paint("command", str(data.get("command", ""))))
-        elif kind == "drop_context":
-            self._line(f"{self._stamp()}  {self._paint('warning', 'CONTEXT CLEANUP')}  requested")
-        elif kind == "compact_context":
-            self._line(f"{self._stamp()}  {self._paint('warning', 'CONTEXT COMPACT')}  requested")
         elif kind == "project_init":
             self._line(f"{self._stamp()}  {self._paint('state', 'PROJECT STATE')}  initial plan")
             for item in data.get("design", []):
@@ -227,7 +226,7 @@ class LiveConsoleRenderer:
                             self._line("    " + self._paint("metadata", "EVIDENCE") + "  " + item.strip())
         elif kind == "project_review_complete":
             self._line(f"{self._stamp()}  {self._paint('state', 'PROJECT STATE')}  review complete")
-        elif kind in {"gui_start", "view_gui", "click", "right_click", "drag", "type_text", "gui_close", "press_key", "hold_key"}:
+        elif kind in {"gui_start", "view_gui", "click", "double_click", "right_click", "drag", "type_text", "gui_close", "press_key", "hold_key"}:
             self._line(f"{self._stamp()}  {self._paint('external', 'GUI')}  {kind}")
             coords = " ".join(f"{name}={data[name]}" for name in ("x", "y", "x1", "y1", "x2", "y2") if name in data)
             if coords:
@@ -302,38 +301,6 @@ class LiveConsoleRenderer:
         extra = f" · {duration}s" if duration is not None else ""
         self._line(f"  {mark} " + self._paint("metadata", f"{op_id} · exit {exit_code}{extra}"))
 
-    def context_drop(self, disposition_id: str, *, handles: list[str], tokens: int,
-                     intent: str, managed_after: int, budget: int) -> None:
-        self._close_streams()
-        self._line(f"{self._stamp()}  {self._paint('warning', 'CONTEXT')}  {disposition_id}")
-        self._line(f"  removed {', '.join(handles)} · freed ~{tokens} tok")
-        self._line(f"  reason  {intent}")
-        self._line(f"  replaceable {managed_after}/{budget}")
-
-    def context_replacement(
-        self,
-        disposition_id: str,
-        *,
-        mode: str,
-        items: list[dict[str, Any]],
-        tokens_before: int,
-        tokens_after: int,
-        managed_after: int,
-        budget: int,
-    ) -> None:
-        """Render in-place context replacement; owns no context/cache semantics."""
-        self._close_streams()
-        label = "TOMBSTONE" if mode == "tombstone" else "COMPACTED"
-        self._line(f"{self._stamp()}  {self._paint('warning', 'CONTEXT')}  {disposition_id}")
-        for item in items:
-            handle = str(item.get("handle", ""))
-            before = int(item.get("original_approx_tokens", 0) or 0)
-            after = int(item.get("replacement_approx_tokens", 0) or 0)
-            note = str(item.get("note", ""))
-            self._line(f"  {handle}  RAW ~{before} tok → {label} ~{after} tok")
-            self._line(f"    {note}")
-        freed = tokens_before - tokens_after
-        self._line(f"  net freed ~{freed} tok · replaceable {managed_after}/{budget}")
 
     def invalid(self, message: str) -> None:
         self._close_streams()

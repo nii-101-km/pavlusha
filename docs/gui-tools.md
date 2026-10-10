@@ -49,7 +49,7 @@ with the required host packages; no browser discovery or fallback occurs. Missin
 schemas also fail at launch. Ubuntu snap Firefox and `/lib/chatgpt` are not used.
 
 ```json
-{"action":"gui_start","command":"pavlusha-browser http://127.0.0.1:8000","network":true,"timeout":300,"delay":8}
+{"action":"gui_start","command":"pavlusha-browser http://127.0.0.1:8000","network":true,"delay":8}
 ```
 
 A web server started in a separate shell sandbox needs `network:true` and controller network permission
@@ -80,8 +80,7 @@ vision model or OCR fallback is selected automatically. Checkpoints do not chang
 GUI availability; a cold restart rechecks host dependencies and does not restore
 an old GUI session or screenshot.
 
-`gui_start.timeout` remains accepted/validated for compatibility but no longer limits session
-lifetime. The same private session persists across model turns, idle time, shell actions and
+`gui_start` has no timeout field; unknown fields are rejected. The same private session persists across model turns, idle time, shell actions and
 periodic/HIGH review until `gui_close` or controller termination (including explicit overflow cold
 recovery). Keep the main GUI command in the foreground. A server launched in the same `gui_start`
 command shares and belongs to that sandbox; it is cleaned up with the browser. GUI does not extend
@@ -95,9 +94,10 @@ controller network permission is enabled (default; `--no-network` disables it).
 The minimal first transplant exposes:
 
 ```json
-{"action":"gui_start","command":"python app.py","network":false,"timeout":300,"delay":0.8}
+{"action":"gui_start","command":"python app.py","network":false,"delay":0.8}
 {"action":"view_gui","delay":3.0}
 {"action":"click","x":400,"y":300,"delay":0.5}
+{"action":"double_click","x":400,"y":300,"delay":0.5}
 {"action":"right_click","x":400,"y":300,"delay":0.5}
 {"action":"drag","x1":100,"y1":100,"x2":500,"y2":300,"delay":0.5}
 {"action":"type_text","text":"hello","delay":0.5}
@@ -147,7 +147,8 @@ Each successful input action follows the same mechanical sequence:
 authority cookie; its result is `state:closed`. If the application exits before capture, no screenshot
 is returned. Repeated close also cleans up an already-exited session. Failed starts release their display.
 
-A left click is marked `YOUR CLICK`, a right click `RIGHT CLICK`, and a drag has an arrow plus `DRAG`.
+A double click sends two left clicks 50 ms apart in one helper invocation; `delay` applies after both.
+It is marked `DOUBLE CLICK`. A left click is marked `YOUR CLICK`, a right click `RIGHT CLICK`, and a drag has an arrow plus `DRAG`.
 The system prompt and the image-adjacent text explicitly state that these marks are Core annotations,
 not application UI. `view_gui` returns a clean frame and clears the previous gesture marker. The
 underlying clean PNG is never painted over.
@@ -211,7 +212,7 @@ tests require `PAVLUSHA_LIVE_NETWORK=1`). Both real browser regressions ran, not
 `agent.py --help` also exited 0. Existing dependencies on this machine were sufficient; no system
 package installation or host policy change was necessary.
 
-Double-click, scrolling, arbitrary hotkeys and semantic target detection remain outside this repair.
+Scrolling, arbitrary hotkeys and semantic target detection remain outside this repair.
 
 ## Literal text / XKB regression
 

@@ -54,8 +54,8 @@ def main():
         seen,result,error = run_script(root,replies,extra=INCIDENT_OPTIONS[:4]+['--history-high','30'])
         assert result==0 and error is None and required(seen[3])
         state = StateStore(root/'state','task').load()
-        assert state['checkpoint_handoff']=='Measured HIGH completed.'
-        high = {'provider_usage':99660,'result':result,'handoff':state['checkpoint_handoff'],
+        assert state['recovery_checkpoint']['handoff']=='Measured HIGH completed.'
+        high = {'provider_usage':99660,'result':result,'handoff':state['recovery_checkpoint']['handoff'],
                 'archived':(root/'state/history_archive.jsonl').exists()}
     report = {'context':117248,'max_tokens':8000,'threshold':99660,'previous_112021':old,
               'step19_lifecycle':second,'measured_high':high,'result':'PASS'}

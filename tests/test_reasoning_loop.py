@@ -38,6 +38,34 @@ def detect(text, chunk_size):
 
 
 class DetectorTests(unittest.TestCase):
+    def test_fenced_code_is_ignored_across_stream_boundaries(self):
+        text = "before\n```python\n" + LOOP + "\n```\nafter"
+        for size in (1, 2, 7, 97, len(text)):
+            detector, _ = detect(text, size)
+            self.assertIsNone(detector.confirmation)
+            self.assertEqual(detector.word_count, 2)
+        detector, _ = detect("before\n```python\n" + LOOP, 1)
+        self.assertIsNone(detector.confirmation)
+        self.assertEqual(detector.word_count, 1)
+
+    def test_nested_fences_and_language_tags_do_not_expose_code(self):
+        text = "before\n````markdown\n```python\n" + LOOP + "\n```\n````\nafter"
+        invalid_close = "before\n```python\n```not_a_closing_fence\n" + LOOP + "\n```\nafter"
+        for source in (text, invalid_close):
+            for size in (1, 2, 7, 97, len(source)):
+                detector, _ = detect(source, size)
+                self.assertIsNone(detector.confirmation)
+                self.assertEqual(detector.word_count, 2)
+        self.assertIsNotNone(detect(text + "\n" + LOOP, 1)[0].confirmation)
+
+    def test_prose_loops_remain_detected_around_code(self):
+        text = "```python\n" + LOOP + "\n```\n" + LOOP
+        expected = detect(LOOP, 7)[0].confirmation
+        for size in (1, 7, 97, len(text)):
+            self.assertEqual(detect(text, size)[0].confirmation, expected)
+        # Inline code is prose for this detector, not a fenced block.
+        self.assertIsNotNone(detect("`" + LOOP + "`", 1)[0].confirmation)
+
     def test_real_qwen_lab5_interrupted_generation_is_detected(self):
         # Full terminal-captured STEP 10, including its unique preamble and final
         # truncated sentence. No repetition was added to this fixture.
@@ -272,6 +300,17 @@ class RuntimeRecoveryTests(unittest.TestCase):
         return dict(requests=requests,responses=responses,commands=commands,maps=maps,
                     before=before,state=store.load(),events=events,result=result,error=error,output=output.getvalue())
 
+    def test_fenced_code_repetition_does_not_interrupt_action(self):
+        reasoning = "before\n```python\n" + LOOP + "\n```\nafter"
+        with tempfile.TemporaryDirectory() as tmp:
+            case = self.run_case(Path(tmp), [script(SHELL, reasoning), script()],
+                                 extra=['--live'])
+            self.assertEqual(case['result'], 0, case['error'])
+            self.assertEqual(case['commands'], ['verify'])
+            self.assertFalse(any(e['kind'] == 'reasoning_loop' for e in case['events']))
+            self.assertNotIn('REASONING RECOVERY', str(case['requests']))
+            self.assertIn('cycleword', str(case['requests'][1]['messages']))
+
     def test_off_and_observe_preserve_actions_history_and_handoff(self):
         for mode in ('off','observe'):
             with self.subTest(mode=mode),tempfile.TemporaryDirectory() as tmp:
@@ -284,7 +323,7 @@ class RuntimeRecoveryTests(unittest.TestCase):
                 if loops: self.assertFalse(loops[0]['interrupted'])
                 self.assertEqual(case['requests'][0]['stream'],mode=='observe')
                 self.assertEqual(case['maps'],['refresh'])
-                self.assertEqual(case['state']['checkpoint_handoff'],'SEED_HANDOFF')
+                self.assertEqual(case['state']['recovery_checkpoint']['handoff'],'SEED_HANDOFF')
                 self.assertNotIn('REASONING RECOVERY',str(case['requests']))
 
     def test_real_qwen_trace_replay_off_observe_and_recover(self):
@@ -334,7 +373,7 @@ class RuntimeRecoveryTests(unittest.TestCase):
                 script({'action':'shell','command':'NEVER_EXECUTE'},LOOP,
                        early_content=json.dumps({'action':'shell','command':'NEVER_EXECUTE'})),
                 script(SHELL),script(reasoning=LOOP),script()],
-                extra=['--max-reasoning-loop-recoveries','1','--live'])
+                extra=['--max-reasoning-loop-recoveries','1','--live','--reasoning-loop-diagnostics'])
             self.assertEqual(case['result'],0,case['error'])
             self.assertEqual(case['commands'],['verify','verify'])
             self.assertEqual(case['maps'],['refresh'])
@@ -352,7 +391,7 @@ class RuntimeRecoveryTests(unittest.TestCase):
             self.assertIn('REASONING LOOP',case['output'])
             self.assertIn('repetition suspected',case['output'])
             self.assertEqual(case['before']['project_state'],case['state']['project_state'])
-            self.assertEqual(case['state']['checkpoint_handoff'],'SEED_HANDOFF')
+            self.assertEqual(case['state']['recovery_checkpoint']['handoff'],'SEED_HANDOFF')
             self.assertFalse((root/'state/history_archive.jsonl').exists())
 
     def test_exhaustion_preserves_state_files_and_restart(self):
@@ -399,7 +438,7 @@ class RuntimeRecoveryTests(unittest.TestCase):
                 self.assertEqual(case['requests'][2]['messages'],case['requests'][1]['messages']+[RECOVERY_MESSAGE])
                 self.assertNotIn('cycleword',str(case['requests'][3]['messages']))
                 periodic=action['action']=='project_review_skip'
-                self.assertEqual(case['state']['checkpoint_handoff'],'SEED_HANDOFF' if periodic else 'NEW_HANDOFF')
+                self.assertEqual(case['state']['recovery_checkpoint']['handoff'],'SEED_HANDOFF' if periodic else 'NEW_HANDOFF')
                 if periodic:
                     self.assertIn('PERIODIC PROJECT STATE REVIEW',case['requests'][1]['messages'][-1]['content'])
                     self.assertFalse((root/'state/history_archive.jsonl').exists())
@@ -436,6 +475,8 @@ class RuntimeRecoveryTests(unittest.TestCase):
 
     def test_cli_defaults_and_validation(self):
         args=build_parser().parse_args(['task'])
+        self.assertFalse(args.reasoning_loop_diagnostics)
+        self.assertTrue(build_parser().parse_args(['--reasoning-loop-diagnostics','task']).reasoning_loop_diagnostics)
         self.assertEqual(args.reasoning_loop_recovery,'recover')
         for interactive in ([], ['--interactive']):
             self.assertEqual(build_parser().parse_args([*interactive,'task']).reasoning_loop_recovery,'recover')

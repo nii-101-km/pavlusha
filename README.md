@@ -123,12 +123,16 @@ Set credentials in the controller environment, without committing their values.
 | `--max-tokens 8192` | Worker completion ceiling, including reasoning. |
 | `--command-timeout 300` | Maximum seconds per shell command; Worker-selected timeouts are clamped to this ceiling. |
 | `--output-limit 24000` | Hard shell-output and serialized function-result admission limit, in characters. |
-| `--no-network`, `--no-gui`, `--no-live` | Disable default network permission, private GUI tools or Worker progress output. Positive flags remain compatible. |
+| `--no-network`, `--no-gui`, `--no-live` | Disable default network permission, private GUI tools or Worker progress output. Use the corresponding positive flags to enable them explicitly. |
 
-`--history-window`, `--raw-reasoning-limit`/`--worker-reasoning-attractor-tokens`,
-and legacy State Manager/semantic-compaction/self-context-maintenance switches are
-compatibility no-ops in the active loop. There is no active partial LOW history cut;
-`--history-low` is unsupported. See `--help` for the accepted CLI surface.
+Only active runtime options are accepted; obsolete State Manager, context-maintenance,
+RAW-reasoning and partial history-window switches and aliases have been removed.
+See `--help` for the current CLI. `agent.py` is only a command-line entry point;
+Python callers should import the relevant `pavlusha_agent` module directly.
+
+Controller state uses schema **3**. Older state formats are rejected without migration.
+Use a new `--state-dir` for a new run, or `--reset-state` to explicitly start fresh
+controller state while preserving work files. Older runs cannot be resumed with this version.
 
 ## Optional document packs
 
@@ -219,8 +223,9 @@ failure and closes the private display if release cannot be confirmed.
 
 Keep the main GUI command in the foreground. Its session and any server started
 inside that command persist across idle/model/shell/review turns until `gui_close`
-or controller termination/recovery. `gui_start.timeout` is a compatibility no-op;
-GUI does not extend ordinary shell process lifetime or count as shell operations.
+or controller termination/recovery. `gui_start` accepts command, network and delay;
+its removed timeout field is rejected. GUI does not extend ordinary shell process
+lifetime or count as shell operations.
 See [GUI tools](docs/gui-tools.md) for actions, delays, annotation and cleanup.
 
 Document rendering creates PDF/PNG files. GUI opens those files in a viewer;
@@ -290,7 +295,7 @@ startup loads only the validated committed generation/handoff, preserves the fac
 operation ledger and newer work files, rebuilds Map, and discards post-checkpoint
 working State/history. Missing/invalid committed data fails as **RECOVERY FAILED**;
 there is no reconstruction from logs/files, legacy migration or backup fallback.
-A nonexistent State directory starts normally; `--reset-state` intentionally starts
+A nonexistent or completely empty State directory starts normally; `--reset-state` intentionally starts
 fresh controller State while preserving work files. State is atomically committed;
 it does not guarantee arbitrary work-file durability or universal power-loss recovery.
 See [Project State](PROJECT_STATE.md) and [atomic recovery](docs/atomic-checkpoint-recovery.md).
@@ -324,6 +329,36 @@ rerunning review/Map preparation. Detection needs `reasoning_content` SSE deltas
 buffered providers delay detection. Closing the response does not acknowledge
 cancellation of server computation.
 
+Malformed actions and rejected Project State mutations share a limit of three consecutive failures.
+An accepted action resets this counter. Shell operation records preserve elapsed time as `duration_seconds`.
+
+Completed shell and `call_function` operations also have an always-on exact repetition guard.
+It hashes canonical JSON of the action and its result (excluding shell elapsed time) and checks
+the last nine operations for cycles of length 1, 2 or 3 repeated three times. The last result is
+recorded before entering the ordinary interactive pause; no next model request is sent until
+the user resumes. Empty Enter resumes, guidance is forwarded normally, and `/quit` ends the run.
+Batch mode stops with an error instead of waiting. There is no sleep timer or external checker.
+GUI actions and Expert consultations clear this operation history; so does user intervention.
+Project State updates/reviews do not clear it. Withheld or unexecuted results cannot establish a repeat.
+This is a repetition alarm, not proof of stalled progress: polling and silent commands that change
+files can trigger it; different output, including timestamps, can hide a real loop.
+
+In interactive mode, `Ctrl+\\` cancels the current generation and enters the ordinary pause.
+Partial reasoning/actions stay in diagnostics and are never executed or sent back as context.
+During tools it requests a safe pause after completion. `Ctrl+Z` keeps its existing safe-pause
+behavior. Cancellation closes the HTTP stream at the next received line; a stalled connection or
+prompt processing can delay it. The installed LM Studio backend was observed cancelling its task
+and releasing the compute slot on disconnect; other servers may continue computing.
+
+At PAUSED, `/trim_last_turns N` (also `trim_last_turns N`) removes N completed turns from active
+context only after the displayed warning and explicit `y` confirmation. The default is refusal.
+It stays paused afterwards for guidance or Enter. Whole reasoning/action/result groups are removed;
+human instructions, original task and system instructions remain. Removed records are archived;
+Project State, /work and executed effects are not rolled back. Current Project State is refreshed
+in the prompt, stale GUI observation is cleared and old prompt-usage measurement is discarded.
+Normal cold resume continues from the existing committed checkpoint, without replaying History
+archives; this command adds no new checkpoint or recovery format.
+
 ## Live terminal output
 
 Default live output (`--no-live` disables Worker progress) is an append-only Rich-based log on **stderr**, without an alternate screen,
@@ -347,7 +382,7 @@ for the existing action families, phase selection, truncation handling and local
 
 ```bash
 python -m unittest discover -s tests
-python -m compileall -q agent.py bench.py pavlusha_agent tests tools
+python -m compileall -q agent.py pavlusha_agent tests tools
 ```
 
 Install `requirements-test.txt` first (controller dependencies plus the independent
@@ -359,7 +394,9 @@ skip without optional dependencies; real render tests use
 `PAVLUSHA_TEST_REAL_RENDER=1` / `PAVLUSHA_TEST_REAL_XLSX_RENDER=1` with the corresponding
 `tests.test_docx_pack` / `tests.test_xlsx_pack` modules and system tools installed.
 OCR smoke tools require a separately supplied OCR application;
-local benchmark runs, OCR outputs and downloaded models are not distributed here.
+OCR outputs and downloaded models are not distributed here. The retired context-maintenance
+A/B benchmark and its obsolete smoke launcher have been removed; checkpoint/context
+regressions remain in the unit suite and `tools/replay_context_guard.py`.
 
 ## Documentation
 
@@ -393,3 +430,10 @@ request, including after `release_worker`. Omission preserves provider/model def
 behavior. Values are not locally normalized or replaced: provider rejection remains an
 explicit runtime error, with no hidden fallback. This is a request option; the existing
 model unload/restore configuration handling is unchanged.
+
+Reasoning detector details are hidden by default; use `--reasoning-loop-diagnostics` to display
+window sizes, similarity and distance. Detection and recovery remain enabled; full interruption
+diagnostics remain in `experiment.jsonl`. Fenced backtick code blocks in reasoning are excluded
+from lexical comparison; prose and inline code remain checked. Closing backtick fences must be
+at least as long as their opener and have no language tag. An unclosed fence stays excluded
+for the rest of that generation.

@@ -28,15 +28,15 @@ These architectural responsibilities remain separate.
 
 ## Final on-disk layout
 
-The smallest change keeps **one authoritative file**, `state.json`, with the existing controller
-schema and working fields. A nested checkpoint envelope is the committed recovery point:
+The runtime keeps **one authoritative file**, `state.json`, with controller schema 3 and active
+working fields. Schemas 1 and 2 are rejected without migration. A nested checkpoint envelope
+is the committed recovery point:
 
 ```text
-state.json                         controller schema_version = 2
+state.json                         controller schema_version = 3
   task                             original text / SHA-256 / immutable
   version                          current controller write version
   project_state                    live working State; may be newer than checkpoint
-  checkpoint_handoff               live prompt copy
   operations / counters            factual ledger, including post-checkpoint operations
   run / metadata                   current process/controller metadata
   recovery_checkpoint              the single committed recovery generation
@@ -60,8 +60,8 @@ history_archive.jsonl              exact archived history; never auto-restored
 There is only one envelope. A new HIGH replaces it, rather than accumulating generations or
 handoffs. Working State and the envelope are separate views in the same atomic file image;
 this preserves the last committed generation even when review updates the live working view.
-The existing top-level handoff copy is retained for prompt compatibility, but cold restart ignores
-it and restores the envelope's value. The digest binds State, handoff and metadata together; it
+The handoff exists only inside the committed envelope; startup and cold restart use that value.
+The digest binds State, handoff and metadata together; it
 is an integrity check, not authentication or semantic verification.
 
 ## Publication protocol
@@ -120,8 +120,8 @@ planning schema or semantic quality gate was introduced.
 The 2048-byte bound remains raw UTF-8 text length, checked before publication and before trimming.
 Exactly 2048 ASCII bytes or 1024 two-byte Cyrillic characters are accepted. One additional byte
 is rejected without replacing the old committed generation. Unencodable surrogate text is now
-reported as a structural AgentError. Omission remains compatible with older action shapes and
-replaces the handoff with empty text; the prompt still requests that the Worker supply it.
+reported as a structural AgentError. The optional field defaults to empty text; omission
+replaces the previous handoff with empty text; the prompt still requests that the Worker supply it.
 
 On HIGH success, State and handoff are committed together before history reset. The first resumed
 Worker receives the matching committed handoff after State/Map, once per prompt, outside Recent
@@ -131,9 +131,9 @@ markers. Only the current envelope/value is loaded; existing exact-action audit 
 ## Strict startup algorithm and failure policy
 
 The runtime opts into `StateStore(..., cold_restart=True)` **before** constructing ExperimentRecorder,
-ProjectMap or ChatProvider. The low-level StateStore inspection/legacy compatibility API retains
-its previous default behavior for existing historical unit callers; it does not authorize a runtime
-cold restart. Every production `run_agent` entry uses the strict path.
+ProjectMap or ChatProvider. Low-level `StateStore` inspection reads current schema files without
+rolling working State back; it does not authorize a runtime cold restart. Every production
+`run_agent` entry uses the strict path. No StateStore API migrates old schema files.
 
 1. Previously nonexistent state directory: create normal fresh controller state. No recovery point
    exists until a valid `project_init` atomically commits the initial generation.
@@ -153,8 +153,9 @@ cold restart. Every production `run_agent` entry uses the strict path.
 
 Policy is fail-closed, with **no automatic fallback**: corrupt committed data fails even if a valid
 old-looking temp file exists. Incomplete candidates beside a valid committed file are ignored.
-An existing empty state directory, uninitialized controller file, metadata/handoff alone, or only
-useful project files cannot authorize recovery. No `project_init` request or provider call occurs
+A nonexistent or completely empty state directory starts a new run rather than recovery.
+A nonempty state directory requires a valid committed state: an uninitialized controller file,
+metadata/handoff alone, or useful project files cannot authorize recovery. No `project_init` request or provider call occurs
 on failed recovery, and the failed state directory's contents are left intact.
 
 Older controller files without a `recovery_checkpoint` envelope are explicitly rejected by runtime

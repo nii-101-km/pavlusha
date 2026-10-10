@@ -85,13 +85,11 @@ class ReasoningEffortTests(unittest.TestCase):
                 self.assertTrue(all('reasoning_effort' not in r for r in requests))
                 self.assertEqual(commands, [])
 
-    def test_arbitrary_cli_string_and_raw_reasoning_noop_unchanged(self):
+    def test_arbitrary_cli_string_is_passed_unchanged(self):
         for text in ('provider-new-value', 'vendor:custom effort/β ', ''):
             with self.subTest(text=text):
-                args = build_parser().parse_args(['--reasoning-effort',text,
-                                                  '--raw-reasoning-limit','20000','task'])
+                args = build_parser().parse_args(['--reasoning-effort',text,'task'])
                 self.assertEqual(args.reasoning_effort, text)
-                self.assertEqual(args.raw_reasoning_limit, 20000)
 
     def test_cli_effort_reaches_each_actual_request_unchanged(self):
         for streaming in (False, True):

@@ -5,7 +5,8 @@ Enabled by default with `python agent.py --workdir ./agent-work "Your task"`.
 The existing model, network, GUI, Expert, GPU shell, Worker release and limit options apply.
 Live Worker output is also default-on; `--no-live` disables progress while retaining
 chat messages and pause controls. Without a positional task, the first safe input
-prompt collects it. Piped stdin uses `--no-interactive`; interactive mode requires
+`TASK REQUIRED` prompt collects a nonblank task; this is not a pause in running work.
+When splitting a shell command across lines, continue the line before the quoted task with `\`. Piped stdin uses `--no-interactive`; interactive mode requires
 terminal stdin and fails explicitly for a pipe rather than waiting.
 
 ## Controls and lifecycle
@@ -19,6 +20,26 @@ terminal stdin and fails explicitly for a pipe rather than waiting.
 - Type one message and press Enter to resume with that evidence. Empty Enter resumes
   without a message. `/quit` or terminal EOF ends the session at this safe boundary.
 - Worker `wait_for_user` enters the same safe input path inside the active TASK.
+- **Ctrl+\\** requests cancellation of an active streamed generation. Core closes the response
+  at the next received SSE line, keeps partial reasoning/content/tool calls only in diagnostics,
+  and enters the existing pause. Even empty resume requests a fresh generation. The check includes
+  tool-only deltas and completion frames. Interactive mode streams even with `--no-live` and
+  reasoning-loop recovery off. During tool execution this requests a safe pause, preserving
+  completed output. Original SIGQUIT handling and terminal settings are restored on exit.
+- Exact shell/function action-result cycles of length 1–3 repeated three times enter this
+  same pause after recording the completed result. No further model request is issued while
+  waiting. Empty Enter or a message resumes with a fresh repetition history; `/quit` ends.
+  This guard uses SHA-256 of canonical JSON, ignoring only shell elapsed time. GUI actions
+  and Expert consultations clear its history; Project State reviews/updates do not.
+  It is always enabled, with no external model or host sleep. Noninteractive runs stop with
+  an explicit error. Identical results do not prove absence of progress (for example silent
+  file edits or polling); changed output can prevent detection. Hidden/unexecuted outcomes
+  are excluded. Diagnostic `operation_loop` events include cycle length and matched step numbers.
+- The Worker prompt asks it to distinguish productive independent investigation from a blocker
+  requiring the user's information, access, resource, or decision. It should explain the obstacle,
+  ask a concrete question and wait, retaining dependent work as unfinished. Equivalent retries,
+  invented inputs or unilateral changes to mandatory requirements do not resolve a blocker.
+  This is a behavioral instruction, not a controller guarantee that every blocker will be detected.
 - Accepted FINISH records the existing finished status, prominently displays its summary,
   and returns 0 from the runtime in both modes. It never enters another input prompt or
   accepts another task. Terminal attributes/signal handlers are restored on exit.
@@ -49,7 +70,7 @@ any Worker restoration are then one indivisible runtime operation. A request aft
 reserves the next boundary; it cannot undo an already admitted action. A pause request is not a
 promise that a command ends immediately. Existing command/HTTP timeouts still apply.
 
-**During inference:** the active generation finishes normally. Core pauses before dispatching its
+**During inference with Ctrl+Z:** the active generation finishes normally. Core pauses before dispatching its
 proposal. If input contains a message, that proposal is discarded and a new generation receives
 it; the discarded proposal is not represented as an executed action. Empty resume lets the same
 proposal proceed through normal validation. A later request during validation is caught by the
@@ -65,6 +86,39 @@ The synchronization is local to Worker generation/dispatch. PAUSED prohibits fur
 it does not freeze independently running GUI applications, shell-launched background jobs, remote
 services, or other external writers. Such activity can still change the external world. There is no
 new process-tree freeze/rollback system. Only one controller per terminal/state directory is supported.
+
+Cancellation is not a universal backend guarantee. The real LM Studio run recorded
+`Client disconnected. Stopping generation...`, `cancel task` and release of the matching
+compute slot during reasoning at step 11. Its log explicitly permits prompt processing to finish
+first. A blocking connection with no arriving SSE line delays local cancellation too. There is
+no separate cancel endpoint, unload/reload or provider architecture change. Other backends may
+continue computation after disconnect; only local response discard is guaranteed by Core.
+
+## Manual context trimming
+
+At an existing pause, enter `/trim_last_turns N` (without `/` is also accepted). Positive N must
+not exceed available completed turns. Core shows the required `WARNING: CONTEXT HISTORY TRIMMING`
+and `USE AT YOUR OWN RISK` text; only `y`/`Y` confirms, and blank input declines. Invalid counts
+are refused before confirmation. EOF or `/quit` exits without applying pending deletion.
+After confirm or decline the session remains paused, accepting guidance, Enter, or `/quit`.
+
+Real Worker step IDs delimit turns. A retained assistant action plus its subsequent factual user
+response establishes completion; unfinished proposals are excluded. The whole completed step's
+reasoning/action/results are removed together. Human intervention and controller trim notices
+are kept independently, and system/task/protocol messages outside History are untouched.
+If a proposal was held at a Ctrl+Z boundary, a successful trim invalidates it even on empty resume.
+
+Before deletion, original records are flushed to the existing `history_archive.jsonl`. An archive
+failure leaves active History intact. `context_trim` telemetry records removed step IDs; no new
+memory store or checkpoint format is created. The prompt receives current Project State and a
+factual deletion notice; stale GUI observation and prompt-usage measurement are cleared. Project
+State, /work, OP IDs, executed effects and the operation ledger are unchanged. Removed actions
+may still have effects in /work: inspect it before depending on forgotten evidence.
+
+Cold restart continues to use the ordinary committed Project State/handoff and empty Recent
+History. Archives are never replayed to the model, so trimmed messages cannot reappear. As before,
+uncheckpointed working-state updates are not promised to survive cold restart. Trimming neither
+commits them nor restores an earlier checkpoint. Files remain current through normal resume.
 
 ## Semantic delivery and Worker actions
 
@@ -135,6 +189,32 @@ Worker's responsibility to materialize before committing a recovery point.
 
 ## Verification and review files
 
+Manual cancellation and trimming were validated sequentially after a real acceptance dogfood.
+The final suite passed 375 tests with 29 opt-in skips; all 28 focused cancel/trim/operation-loop
+tests passed with real bubblewrap checks enabled. `tests/test_generation_cancel.py` covers
+reasoning/content/tool-only/completion-frame cancellation, discard on empty resume, completion
+races, signal restoration, safe tool completion and cancellation at the last allowed step. `tests/test_context_trim.py` covers whole
+turns, preserved human instructions, confirmation/refusal, invalid counts, unchanged state/files,
+durable audit, held-proposal invalidation, cold resume and cancellation→trim→guidance.
+
+Actual `qwen/qwen3.8-27b` runs used existing Glitch Quest copies: acceptance at step 17,
+human feedback, second acceptance request at 21 and terminal FINISH at 23; manual generation
+cancellation at step 11 and resumed FINISH at 15; integrated GUI start/character switching,
+cancellation at step 10, then a fresh acceptance request at 13. LM Studio logs recorded actual
+cancel-task/slot-release events. The integrated run did not naturally enter an action attractor;
+healthy GUI turns were not deleted. Audit/report artifacts are under
+`/home/leonid/pavlusha-dev/scratch/generation-control-20261009/`.
+
+The exact operation-loop guard is covered by `tests/test_operation_loop.py`: cycles of length
+1–3, canonical JSON ordering, changed arguments/results, excluded outcomes, bounded memory,
+saved evidence before pause, no next inference while waiting, empty/manual resume, GUI exclusion,
+function calls, review skips and bounded batch termination. With
+`PAVLUSHA_TEST_OPERATION_LOOP_SHELL=1`, its real-shell tests run bubblewrap commands
+in an isolated temporary work directory with a real pseudoterminal and scripted Worker replies.
+The three-step shell cycle pauses at step 10 after nine saved failed commands, then forwards
+human guidance and completes. The original 13-test run and the full 359-test suite passed
+(26 opt-in integration skips in the full run). No live model or host suspend was used.
+
 `tests/test_interactive.py` has 19 deterministic tests covering autonomy, inference pause/discard,
 empty resume, dispatch-time pause, completed shell evidence ordering, composition ownership,
 Worker question/reply, terminal FINISH, phase gates/checkpoints, release restoration, GPU shell
@@ -165,7 +245,7 @@ Core passes the exact string to the existing ChatProvider configuration argument
 `complete_turn` and `complete_turn_stream` already serialize this field in `/v1/chat/completions`;
 no new provider/model abstraction was added. HTTP or streamed provider errors remain real runtime
 errors, with no removal/retry fallback. Acceptance by a backend does not prove how it interpreted
-the effort internally. `--raw-reasoning-limit 20000` remains the existing compatibility no-op.
+the effort internally. Reasoning retention is controlled by checkpoints; obsolete RAW-buffer flags are rejected.
 
 In this adapter effort is an inference-request option, not a native model-load setting. Every
 Worker generation/retry receives it from the same invocation arguments, including the next turn

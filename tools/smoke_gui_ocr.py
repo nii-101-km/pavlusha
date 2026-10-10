@@ -55,8 +55,8 @@ def main():
                         raise RuntimeError("OCR server did not become ready")
                     time.sleep(.5)
             with tempfile.TemporaryDirectory() as work:
-                with GuiRuntime(Path(work), args.output, max_command_timeout=60, network_allowed=True) as gui:
-                    start = {"command": "pavlusha-browser http://127.0.0.1:8000", "network": True, "timeout": 60, "delay": 8}
+                with GuiRuntime(Path(work), args.output, network_allowed=True) as gui:
+                    start = {"command": "pavlusha-browser http://127.0.0.1:8000", "network": True, "delay": 8}
                     result, before = gui.start(start)
                     report["actions"].append({"action": "gui_start", **start, **result})
                     assert before is not None, result

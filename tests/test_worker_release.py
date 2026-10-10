@@ -182,7 +182,7 @@ class ReleaseRuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, \
              patch('pavlusha_agent.sandbox.build_bwrap_command', return_value=['/bin/bash','-c','sleep 30 & wait']):
             with released():
-                result=run_shell(Path(tmp),'sleep 30 & wait',network=False,timeout=1,output_limit=200)
+                result=run_shell(Path(tmp),'sleep 30 & wait',network=False,timeout=1)
                 events.append('timeout' if result.timed_out else 'finished')
             self.assertEqual(events,['release','timeout','restore'])
             self.assertLess(result.duration, 5)

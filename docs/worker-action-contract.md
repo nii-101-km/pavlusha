@@ -5,7 +5,7 @@ Worker inference request sends LM Studio's OpenAI-compatible
 `response_format.type = "json_schema"`, with `json_schema.name = "worker_action"`,
 `strict = true`, and a schema built by `pavlusha_agent/worker_contract.py`.
 The existing provider sends this parameter in both ordinary and streaming chat
-completions. Expert and legacy State Manager requests are unchanged. There is no
+completions. Expert requests remain independent text requests. There is no
 tool-calling migration or unconstrained fallback when the provider rejects a schema.
 
 ## Active phases
