@@ -7,7 +7,7 @@
 Persistent Autonomous Verification & Local Utility
 Shell-Handling Agent
 
-Version **0.4.0**.
+Version **0.5.0**.
 
 P.A.V.L.U.S.H.A. is a deliberately small local agent runtime. One Worker model
 chooses actions; the Core/controller validates runtime invariants, executes
