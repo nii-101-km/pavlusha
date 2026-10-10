@@ -343,7 +343,7 @@ Project State updates/reviews do not clear it. Withheld or unexecuted results ca
 This is a repetition alarm, not proof of stalled progress: polling and silent commands that change
 files can trigger it; different output, including timestamps, can hide a real loop.
 
-In interactive mode, `Ctrl+\\` cancels the current generation and enters the ordinary pause.
+In interactive mode, `Ctrl+\` cancels the current generation and enters the ordinary pause.
 Partial reasoning/actions stay in diagnostics and are never executed or sent back as context.
 During tools it requests a safe pause after completion. `Ctrl+Z` keeps its existing safe-pause
 behavior. Cancellation closes the HTTP stream at the next received line; a stalled connection or
