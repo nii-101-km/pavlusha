@@ -148,7 +148,7 @@ authority cookie; its result is `state:closed`. If the application exits before 
 is returned. Repeated close also cleans up an already-exited session. Failed starts release their display.
 
 A double click sends two left clicks 50 ms apart in one helper invocation; `delay` applies after both.
-It is marked `DOUBLE CLICK`. A left click is marked `YOUR CLICK`, a right click `RIGHT CLICK`, and a drag has an arrow plus `DRAG`.
+It is marked `DOUBLE CLICK`. A left click is marked `YOUR CLICK`, a right click `RIGHT CLICK`, and a drag has two hollow crosshairs labelled `START` and `END`, with no connecting line or arrow. Connector centres remain visible.
 The system prompt and the image-adjacent text explicitly state that these marks are Core annotations,
 not application UI. `view_gui` returns a clean frame and clears the previous gesture marker. The
 underlying clean PNG is never painted over.

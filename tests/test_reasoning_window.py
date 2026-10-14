@@ -151,13 +151,13 @@ class ChronologicalReasoningProjectCheckpointTests(unittest.TestCase):
         self.assertTrue(content[pos + 3].endswith("R_TWO"))
         self.assertFalse(any("RECENT RAW REASONING" in text for text in content))
 
-    def test_periodic_review_blocks_next_normal_action_until_acknowledged(self):
+    def test_periodic_review_blocks_next_normal_action_until_checkpoint_committed(self):
         turns = [
             init_turn(),
             turn({"action": "shell", "command": "echo one"}),
             turn({"action": "shell", "command": "echo two"}),
             turn({"action": "shell", "command": "echo blocked"}),
-            turn({"action": "project_review_skip"}),
+            turn({"action": "project_review_complete", "handoff": "Next: inspect the third item"}),
             turn({"action": "shell", "command": "echo three"}),
             turn({"action": "project_update", "changes": [{"op": "update_work", "id": "W001", "status": "DONE",
                   "evidence": material_evidence("echo three")}, {"op": "update_work", "id": "W002", "status": "DONE",
@@ -168,8 +168,9 @@ class ChronologicalReasoningProjectCheckpointTests(unittest.TestCase):
         self.assertEqual(result["code"], 0)
         self.assertEqual([op["command"] for op in result["state"]["operations"]], ["echo one", "echo two", "echo three"])
         self.assertIn("PERIODIC PROJECT STATE REVIEW", str(result["workers"][3]))
-        self.assertTrue(any(e["kind"] == "periodic_review_acknowledged" for e in result["logs"]))
-        self.assertFalse(any(e["kind"] == "project_review_completed" for e in result["logs"]))
+        self.assertTrue(any(e["kind"] == "project_review_completed" for e in result["logs"]))
+        self.assertEqual(result["state"]["recovery_checkpoint"]["kind"], "high")
+        self.assertEqual(result["state"]["recovery_checkpoint"]["handoff"], "Next: inspect the third item")
 
     def test_finish_is_rejected_until_project_work_is_done(self):
         turns = [

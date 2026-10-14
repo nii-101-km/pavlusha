@@ -87,6 +87,8 @@ class AtomicCheckpointTests(unittest.TestCase):
                 self.prepare_working_changes(store)
                 actual_replace=os.replace
                 def fail(source,destination):
+                    if Path(destination) != store.state_path:
+                        return actual_replace(source,destination)
                     if after: actual_replace(source,destination)
                     raise OSError('at publication boundary')
                 with patch('pavlusha_agent.state_store.os.replace',side_effect=fail):
@@ -107,7 +109,8 @@ class AtomicCheckpointTests(unittest.TestCase):
             root=Path(tmp); store=self.seed(root); self.prepare_working_changes(store)
             actual_fsync=os.fsync
             def sync(fd):
-                if stat.S_ISDIR(os.fstat(fd).st_mode): raise OSError('directory sync failed')
+                published=json.loads(store.state_path.read_text())['recovery_checkpoint']['handoff']=='HANDOFF_NEW'
+                if published and stat.S_ISDIR(os.fstat(fd).st_mode): raise OSError('directory sync failed')
                 actual_fsync(fd)
             with patch('pavlusha_agent.state_store.os.fsync',side_effect=sync):
                 with self.assertRaisesRegex(OSError,'directory sync failed'):
@@ -136,18 +139,20 @@ class AtomicCheckpointTests(unittest.TestCase):
             self.assertEqual(op['id'],'OP0002')
             self.assertNotIn('HANDOFF_OLD',json.dumps(recovered['recovery_checkpoint']))
 
-    def test_corrupt_candidate_ignored_but_corrupt_committed_generation_fails(self):
+    def test_corrupt_candidate_ignored_and_corrupt_primary_recovers_previous_commit(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp); store=self.seed(root)
             expected=copy.deepcopy(store.load()['recovery_checkpoint'])
             candidate=root/'state/.state.json.tmp.other-process'
             candidate.write_text('{"recovery_checkpoint": invalid')
             self.assertEqual(self.resume(root)['recovery_checkpoint'],expected)
-            # An old complete image beside a corrupt committed file does not authorize fallback.
+            # A complete temporary image still does not authorize recovery from it.
             candidate.write_bytes(store.state_path.read_bytes())
             store.state_path.write_text('{"recovery_checkpoint":')
-            with self.assertRaisesRegex(AgentError,'RECOVERY FAILED'):
-                self.resume(root)
+            recovered=self.resume(root)
+            self.assertEqual(recovered['recovery_checkpoint']['generation'],expected['generation']-1)
+            self.assertNotEqual(recovered['recovery_checkpoint'],expected)
+            self.assertEqual(recovered['project_state'],recovered['recovery_checkpoint']['project_state'])
 
     def test_missing_commit_fails_even_with_newer_work_map_logs_or_handoff(self):
         for artifacts in (('candidate',),('world',),('state_without_checkpoint',)):
@@ -162,7 +167,7 @@ class AtomicCheckpointTests(unittest.TestCase):
                 if 'state_without_checkpoint' in artifacts:
                     store=StateStore(state_dir,'task')
                     store.initialize_project(json.loads(init_turn().content),step=1)
-                    raw=store.load(); del raw['recovery_checkpoint']; store._write_atomic(raw)
+                    raw=store.load(); del raw['recovery_checkpoint']; store.state_path.write_text(json.dumps(raw))
                 args=build_parser().parse_args(['--no-interactive', '--no-live', '--no-network', '--project-map', 'off', '--workdir',str(work),'--state-dir',str(state_dir),
                     '--model','fake','--worker-context-budget','40000','task'])
                 before={p.name:p.read_bytes() for p in state_dir.iterdir()}
@@ -187,10 +192,13 @@ class AtomicCheckpointTests(unittest.TestCase):
                 root=Path(tmp); store=self.seed(root); old=copy.deepcopy(store.load()['recovery_checkpoint'])
                 self.prepare_working_changes(store); store.record_operation({'command':'new generation','exit_code':0})
                 store.complete_project_review(step=5,handoff='HANDOFF_NEW')
+                expected=copy.deepcopy(store.load()['recovery_checkpoint'])
                 mixed=store.load(); mixed['recovery_checkpoint'][field]=old[field]
                 store._write_atomic(mixed)
-                with self.assertRaisesRegex(AgentError,'RECOVERY FAILED'):
-                    self.resume(root)
+                with self.assertRaises(AgentError): validate_checkpoint(mixed,'task')
+                recovered=self.resume(root)
+                self.assertEqual(recovered['recovery_checkpoint'],expected)
+                self.assertEqual(recovered['project_state'],expected['project_state'])
 
     def test_persisted_project_state_is_structurally_validated_without_repair(self):
         def missing(state): del state['project_state']['work']
@@ -206,12 +214,13 @@ class AtomicCheckpointTests(unittest.TestCase):
         for change in (missing,active,status,evidence,duplicate,counters,superseded,initialized,bad_metadata,missing_handoff):
             with self.subTest(change=change.__name__),tempfile.TemporaryDirectory() as tmp:
                 root=Path(tmp); store=self.seed(root); raw=store.load(); checkpoint=raw['recovery_checkpoint']
+                expected=copy.deepcopy(checkpoint)
                 change(checkpoint)
                 checkpoint['sha256']=_digest({k:v for k,v in checkpoint.items() if k!='sha256'})
                 store._write_atomic(raw)
-                before=store.state_path.read_bytes()
-                with self.assertRaisesRegex(AgentError,'RECOVERY FAILED'): self.resume(root)
-                self.assertEqual(store.state_path.read_bytes(),before)
+                with self.assertRaises(AgentError): validate_checkpoint(raw,'task')
+                recovered=self.resume(root)
+                self.assertEqual(recovered['recovery_checkpoint'],expected)
 
     def test_handoff_utf8_boundary_and_rejected_checkpoint_preserve_old_commit(self):
         for text in ('a'*HANDOFF_MAX_BYTES,'я'*(HANDOFF_MAX_BYTES//2)):
@@ -257,25 +266,28 @@ class AtomicCheckpointTests(unittest.TestCase):
 
     def test_duplicate_json_fields_and_invalid_numbers_fail_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root=Path(tmp); store=self.seed(root)
+            root=Path(tmp); store=StateStore(root/'state','task')
+            store.initialize_project(json.loads(init_turn().content),step=1)
             for raw in ('{"recovery_checkpoint":{},"recovery_checkpoint":{}}','{"version":NaN}'):
                 store.state_path.write_text(raw)
                 with self.assertRaisesRegex(AgentError,'RECOVERY FAILED'): self.resume(root)
 
-    def test_periodic_review_does_not_publish_generation(self):
+    def test_periodic_review_publishes_state_and_handoff_without_history_reset(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)
             turns=[init_turn(),turn({'action':'shell','command':'verify'}),
                    turn({'action':'project_update','changes':[{'op':'add_design','decision':'PERIODIC_FINDING','rationale':'new evidence'}]}),
                    turn({'action':'project_update','changes':[{'op':'update_work','id':name,'status':'DONE'} for name in ('W001','W002')]}),
+                   turn({'action':'project_review_complete','handoff':'Next: finish; verification passed'}),
                    turn({'action':'finish','summary':'done'})]
             _,result,error=run_script(root,turns,extra=['--project-review-every','1','--history-high','99','--max-steps','-1'])
             self.assertEqual(result,0,error)
             state=StateStore(root/'state','task').load()
-            self.assertEqual(state['recovery_checkpoint']['generation'],1)
-            self.assertEqual(state['recovery_checkpoint']['kind'],'initial')
-            self.assertEqual(state['recovery_checkpoint']['handoff'],'')
-            self.assertNotEqual(state['project_state'],state['recovery_checkpoint']['project_state'])
+            self.assertEqual(state['recovery_checkpoint']['generation'],2)
+            self.assertEqual(state['recovery_checkpoint']['kind'],'high')
+            self.assertEqual(state['recovery_checkpoint']['handoff'],'Next: finish; verification passed')
+            self.assertEqual(state['project_state'],state['recovery_checkpoint']['project_state'])
+            self.assertFalse((root/'state/history_archive.jsonl').exists())
             recovered=self.resume(root)
             self.assertEqual(recovered['project_state'],state['recovery_checkpoint']['project_state'])
             self.assertEqual(recovered['run']['status'],'running')

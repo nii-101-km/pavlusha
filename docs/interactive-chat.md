@@ -19,6 +19,10 @@ terminal stdin and fails explicitly for a pipe rather than waiting.
   to type**. No generation, retry or action is admitted while this prompt collects input.
 - Type one message and press Enter to resume with that evidence. Empty Enter resumes
   without a message. `/quit` or terminal EOF ends the session at this safe boundary.
+- Multi-line paste is collected as one message using terminal bracketed-paste mode.
+  Pasted line breaks do not submit it: press Enter separately after pasting. During
+  safe input, pasted control bytes cannot trigger pause/cancel signals; non-text
+  controls are removed. Backspace, Ctrl+U and Ctrl+C are available for typed input.
 - Worker `wait_for_user` enters the same safe input path inside the active TASK.
 - **Ctrl+\\** requests cancellation of an active streamed generation. Core closes the response
   at the next received SSE line, keeps partial reasoning/content/tool calls only in diagnostics,
@@ -52,8 +56,9 @@ Ctrl+Z was chosen because the existing runtime is synchronous and POSIX/Linux ba
 signals can record a request during HTTP inference or blocking shell execution without another
 reader thread, hotkey framework, or a full-screen TUI. Shell processes already run in a separate
 session. The short GUI helper now does too, so Ctrl+Z cannot suspend an in-flight gesture/capture.
-Autonomous terminal echo is disabled; pending premature input is flushed before enabling normal
-line editing at a safe boundary. Input reads one canonical line without Python TextIO prefetch.
+Autonomous terminal echo is disabled; pending premature input is flushed before safe input.
+Safe input uses a small byte reader with bracketed paste and explicit Enter submission,
+without Python TextIO prefetch. Bracketed paste is disabled again when work resumes.
 Original terminal attributes and the prior SIGTSTP handler are restored on every ordinary exit,
 exception, EOF and KeyboardInterrupt. SIGKILL cannot run cleanup; a terminal may need `stty sane`
 after forcibly killing its controller.
@@ -240,7 +245,7 @@ Changed files:
 ## Configurable Worker reasoning effort
 
 `--reasoning-effort <string>` is optional and has no choices/enum, normalization, model registry,
-or capability policy. If absent, no `reasoning_effort` request field is supplied. Otherwise
+or capability policy. If absent, `reasoning_effort` defaults to `low`. When explicitly supplied,
 Core passes the exact string to the existing ChatProvider configuration arguments. Both
 `complete_turn` and `complete_turn_stream` already serialize this field in `/v1/chat/completions`;
 no new provider/model abstraction was added. HTTP or streamed provider errors remain real runtime

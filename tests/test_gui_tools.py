@@ -89,7 +89,11 @@ class AnnotationTests(unittest.TestCase):
         marked = annotate_png(clean, {"action": "drag", "x1": 10, "y1": 20, "x2": 700, "y2": 500})
         self.assertNotEqual(clean, marked)
         msg = GuiObservation(clean, marked, {"action": "drag", "x1": 10, "y1": 20, "x2": 700, "y2": 500}, time.time()).message()
-        self.assertIn("DRAG", msg["content"][0]["text"])
+        self.assertIn("START / END", msg["content"][0]["text"])
+        original = Image.open(io.BytesIO(clean)).convert('RGB')
+        annotated = Image.open(io.BytesIO(marked)).convert('RGB')
+        for point in [(10, 20), (700, 500), (355, 260)]:
+            self.assertEqual(original.getpixel(point), annotated.getpixel(point))
         clean_msg = GuiObservation(clean, clean, None, time.time()).message()
         self.assertIn("No previous mouse-action marker", clean_msg["content"][0]["text"])
 

@@ -149,9 +149,11 @@ class FunctionsTests(unittest.TestCase):
     def test_contract_errors_continue_and_periodic_gate_blocks_call(self):
         with patch('pavlusha_agent.provider.ChatProvider.released_worker') as release:
             seen, result, error = run_script(self.root, [init_turn(), turn(call('unknown')),
-                turn(call(a=3)), turn({'action': 'project_review_skip'}),
-                turn(call(a=True)), turn({'action': 'project_review_skip'}),
-                turn(call(a=3)), done('verified'), turn({'action': 'finish', 'summary': 'done'})],
+                turn(call(a=3)), turn({'action': 'project_review_complete', 'handoff': 'Next: validate arguments'}),
+                turn(call(a=True)), turn({'action': 'project_review_complete', 'handoff': 'Next: multiply'}),
+                turn(call(a=3)), done('verified'),
+                turn({'action': 'project_review_complete', 'handoff': 'Next: finish'}),
+                turn({'action': 'finish', 'summary': 'done'})],
                 extra=['--functions', str(self.module), '--project-review-every', '1'])
         self.assertEqual(result, 0, error)
         self.assertIn('unknown_function', str(seen[2]))

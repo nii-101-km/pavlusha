@@ -74,26 +74,26 @@ class SchemaTests(unittest.TestCase):
                        {'action': 'project_review_complete', 'note': None, 'handoff': 'Next: inspect'}):
             validator(initialized=True, checkpoint_required=True).validate(action)
             validate_project_action(action)
-        action = {'action': 'project_review_skip'}
+        action = {'action': 'project_review_complete', 'handoff': 'Next: inspect'}
         validator(initialized=True, periodic_review=True).validate(action)
         validate_project_action(action)
 
     def test_phases_and_feature_flags_never_broaden_allowed_actions(self):
         fixtures = [INIT, SHELL, FINISH, DONE, {'action': 'project_review_skip'},
-                    {'action': 'project_review_complete'}, {'action': 'view_gui'},
+                    {'action': 'project_review_complete', 'handoff': 'Next: inspect'}, {'action': 'view_gui'},
                     {'action': 'ask_expert', 'question': 'what?', 'context': ''},
                     {'action': 'drop_context', 'ids': ['x'], 'intent': 'old'},
                     {'action': 'compact_context', 'items': [{'id': 'x', 'summary': 'old'}]}]
         phases = [
             ({'initialized': False}, {'project_init'}),
             ({'initialized': True}, {'shell', 'finish', 'project_update'}),
-            ({'initialized': True, 'periodic_review': True}, {'project_update', 'project_review_skip'}),
+            ({'initialized': True, 'periodic_review': True}, {'project_update', 'project_review_complete'}),
             ({'initialized': True, 'checkpoint_required': True, 'periodic_review': True},
              {'project_update', 'project_review_complete'}),
             ({'initialized': True, 'gui_enabled': True, 'expert_enabled': True},
              {'shell', 'finish', 'project_update', 'view_gui', 'ask_expert'}),
             ({'initialized': True, 'periodic_review': True, 'gui_enabled': True, 'expert_enabled': True},
-             {'project_update', 'project_review_skip'}),
+             {'project_update', 'project_review_complete'}),
             ({'initialized': True, 'checkpoint_required': True, 'gui_enabled': True, 'expert_enabled': True},
              {'project_update', 'project_review_complete'}),
         ]
@@ -194,8 +194,8 @@ class RuntimeWireTests(unittest.TestCase):
         rejected_update = {'action': 'project_update', 'changes': [
             {'op': 'update_work', 'id': 'W999', 'status': 'ACTIVE'},
         ]}
-        replies = ([INIT] + [SHELL] * 10 + [rejected_update, update]
-                   + [SHELL] * 10 + [update] + [SHELL] * 6
+        replies = ([INIT] + [SHELL] * 10 + [rejected_update, {'action': 'project_review_complete', 'handoff': 'Next: inspect'}]
+                   + [SHELL] * 10 + [{'action': 'project_review_complete', 'handoff': 'Next: inspect'}] + [SHELL] * 6
                    + [update] * 7 + [{'action': 'project_review_complete',
                                      'handoff': 'Next: run the pending shell check.'}]
                    + [SHELL, DONE, FINISH])
@@ -220,7 +220,7 @@ class RuntimeWireTests(unittest.TestCase):
                                     for branch in schema.get('anyOf', [schema])})
                 self.assertEqual(allowed[29], {'shell', 'finish', 'project_update'})
                 for step in (12, 13, 24):
-                    self.assertEqual(allowed[step - 1], {'project_update', 'project_review_skip'})
+                    self.assertEqual(allowed[step - 1], {'project_update', 'project_review_complete'})
                 for step in range(31, 39):
                     request = requests[step - 1]
                     self.assertEqual(allowed[step - 1], {'project_update', 'project_review_complete'})
@@ -244,7 +244,7 @@ class RuntimeWireTests(unittest.TestCase):
                                      for m in requests[38]['messages']))
                 self.assertFalse(any('Stop repeating it and run shell.' in m['content']
                                      for m in requests[38]['messages']))
-                self.assertEqual(state['recovery_checkpoint']['generation'], 2)
+                self.assertEqual(state['recovery_checkpoint']['generation'], 4)
                 self.assertEqual(state['recovery_checkpoint']['step'], 38)
                 self.assertEqual(state['run']['status'], 'finished')
 
@@ -252,8 +252,8 @@ class RuntimeWireTests(unittest.TestCase):
         for streaming in (False, True):
             with self.subTest(streaming=streaming):
                 requests, calls, state, result, error = self.run_case([
-                    INIT, SHELL, {'action': 'project_review_skip'}, {**SHELL, 'gpu': True},
-                    DONE, FINISH,
+                    INIT, SHELL, {'action': 'project_review_complete', 'handoff': 'Next: inspect'}, {**SHELL, 'gpu': True},
+                    DONE, {'action': 'project_review_complete', 'handoff': 'Next: finish'}, FINISH,
                 ], streaming=streaming, every=1)
                 self.assertEqual(result, 0, error)
                 self.assertEqual(calls, ['inspect', 'inspect'])
@@ -265,8 +265,9 @@ class RuntimeWireTests(unittest.TestCase):
                     kinds.append({x['properties']['action']['const'] for x in branches})
                 self.assertEqual(kinds, [
                     {'project_init'}, {'shell', 'finish', 'project_update'},
-                    {'project_update', 'project_review_skip'}, {'shell', 'finish', 'project_update'},
-                    {'project_update', 'project_review_skip'}, {'shell', 'finish', 'project_update'},
+                    {'project_update', 'project_review_complete'}, {'shell', 'finish', 'project_update'},
+                    {'project_update', 'project_review_complete'}, {'project_update', 'project_review_complete'},
+                    {'shell', 'finish', 'project_update'},
                 ])
                 self.assertIn('SEPARATE_REASONING', str(requests[-1]['messages']))
 

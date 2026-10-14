@@ -64,7 +64,9 @@ def worker_response_format(*, initialized: bool, checkpoint_required: bool = Fal
             "note": {"type": ["string", "null"]}, "handoff": string,
         })]
     elif periodic_review:
-        actions = [update, _variant("action", "project_review_skip")]
+        actions = [update, _variant("action", "project_review_complete", {
+            "note": {"type": ["string", "null"]}, "handoff": text,
+        }, ("handoff",))]
     else:
         actions = [
             _variant("action", "shell", {"command": text, "network": boolean, "gpu": boolean,

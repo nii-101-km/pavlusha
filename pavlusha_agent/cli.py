@@ -102,7 +102,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help="require a fresh checkpoint and full history reset at this many retained Worker steps (default: 200)")
     parser.add_argument(
         "--project-review-every", type=int, default=DEFAULT_PROJECT_REVIEW_EVERY,
-        help="force a Project State review after this many executed shell/function operations; 0 disables periodic review",
+        help="commit Project State and handoff after this many executed shell/function operations; 0 disables periodic checkpoints",
     )
     parser.add_argument("--max-reasoning-recoveries", type=int, default=DEFAULT_MAX_REASONING_RECOVERIES,
                         help="max consecutive recoveries from empty worker output with reasoning")
@@ -111,7 +111,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--command-timeout", type=int, default=300, help="hard upper bound per shell command")
     parser.add_argument("--output-limit", type=int, default=24000, help="hard Core admission limit for combined stdout/stderr chars; oversized output is withheld from Worker context")
     parser.add_argument("--max-tokens", type=int, default=8192)
-    parser.add_argument("--reasoning-effort", help="optional Worker reasoning_effort string passed unchanged to provider; omission uses provider/model default")
+    parser.add_argument("--reasoning-effort", default="low", help="Worker reasoning_effort string passed unchanged to provider (default: low)")
     parser.add_argument("--temperature", type=float, default=0.1)
     parser.add_argument("--interactive", action=argparse.BooleanOptionalAction, default=True,
                         help="terminal chat (default: on; --no-interactive for pipes/batch); Ctrl+Z pauses, /quit ends")

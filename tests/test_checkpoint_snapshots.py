@@ -28,6 +28,29 @@ def layer(messages, prefix):
 
 
 class CheckpointSnapshotTests(unittest.TestCase):
+    @unittest.skipUnless(importlib.util.find_spec('tree_sitter') and importlib.util.find_spec('tree_sitter_python'), 'requires tree-sitter')
+    def test_periodic_save_keeps_state_map_and_handoff_prefix_frozen(self):
+        def setup(work):
+            (work/'module.py').write_text('def before(): pass\n')
+        def edit(work, command):
+            if command == 'edit':
+                (work/'module.py').write_text('def after(): pass\n')
+        seen, archived, state = self.run_case([
+            init_turn(), turn({'action': 'shell', 'command': 'edit'}),
+            turn({'action': 'shell', 'command': 'verify'}),
+            done('verify'),
+            turn({'action': 'project_review_complete', 'handoff': 'Next: continue with the changed module'}),
+            turn({'action': 'finish', 'summary': 'done'}),
+        ], extra=['--project-review-every', '2', '--project-map', 'on'], setup=setup, edit=edit)
+        # The accepted save appends history; every early message remains identical.
+        self.assertEqual(seen[1][:4], seen[5][:4])
+        self.assertEqual(layer(seen[1], 'PROJECT STATE'), layer(seen[5], 'PROJECT STATE'))
+        self.assertFalse(any(m['content'].startswith('CHECKPOINT HANDOFF') for m in seen[5]))
+        self.assertIn('Next: continue with the changed module', str(seen[5]))  # action in History
+        self.assertEqual(state['recovery_checkpoint']['handoff'], 'Next: continue with the changed module')
+        self.assertEqual([w['status'] for w in state['recovery_checkpoint']['project_state']['work']], ['DONE', 'DONE'])
+        self.assertFalse(archived)
+
     def run_case(self, turns, *, extra=(), edit=None, setup=None):
         seen = []
         self.archived_before_request = []

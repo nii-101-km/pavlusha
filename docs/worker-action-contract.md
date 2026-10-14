@@ -16,7 +16,7 @@ Schema selection follows the existing runtime gates in their priority order:
 | --- | --- |
 | Project State uninitialized | `project_init` |
 | Required history checkpoint | `project_update`, `project_review_complete` |
-| Periodic Project State review | `project_update`, `project_review_skip` |
+| Periodic Project State review | `project_update`, `project_review_complete` (nonempty handoff required) |
 | Ordinary execution | `shell`, `finish`, `project_update`; GUI actions by default when dependencies are available (`--no-gui` disables); `ask_expert` when Expert is enabled; `call_function` variants when `--functions` is supplied |
 
 GUI variants are `gui_start`, `view_gui`, `click`, `right_click`, `drag`,

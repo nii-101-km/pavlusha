@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -22,13 +23,17 @@ class StateStore:
         has_existing_state = any(self.state_dir.iterdir())
         self.state_path = self.state_dir / "state.json"
         self.log_path = self.state_dir / "state.log"
+        self.checkpoint_history = self.state_dir / "checkpoint-history"
         if reset:
+            if self.checkpoint_history.exists():
+                # Preserve history, but exclude the previous run from reset recovery.
+                self.checkpoint_history.rename(self.state_dir / f"checkpoint-history.reset-{uuid.uuid4().hex}")
+                self._sync_directory(self.state_dir)
             for path in (self.state_path, self.log_path):
                 path.unlink(missing_ok=True)
         if cold_restart and has_existing_state and not reset:
             try:
-                state = self._read_state()
-                checkpoint = validate_checkpoint(state, task)
+                state, checkpoint = self._read_recovery_state(task)
             except (AgentError, TypeError, ValueError, KeyError, UnicodeError) as exc:
                 raise AgentError(f"RECOVERY FAILED: {self.state_path}: {exc}") from exc
             # Working mutations since the committed boundary are not a recovery point.
@@ -36,7 +41,7 @@ class StateStore:
             restored = copy.deepcopy(state)
             restored["project_state"] = copy.deepcopy(checkpoint["project_state"])
             restored["run"] = {"status": "running", "last_finish_summary": ""}
-            if restored != state:
+            if restored != state or not self.state_path.exists() or self._recovered_from_history:
                 restored["version"] += 1
                 restored["metadata"]["updated_at"] = _now()
                 self._write_atomic(restored)
@@ -78,7 +83,8 @@ class StateStore:
             },
         }
 
-    def _read_state(self) -> dict[str, Any]:
+    def _read_state(self, path: Path | None = None) -> dict[str, Any]:
+        path = self.state_path if path is None else path
         def object_fields(pairs):
             result = {}
             for key, value in pairs:
@@ -89,13 +95,65 @@ class StateStore:
         def invalid_number(value):
             raise ValueError(f"invalid JSON number: {value}")
         try:
-            state = json.loads(self.state_path.read_text(encoding="utf-8"),
+            state = json.loads(path.read_text(encoding="utf-8"),
                                object_pairs_hook=object_fields, parse_constant=invalid_number)
         except (OSError, ValueError, UnicodeError) as exc:
-            raise AgentError(f"cannot read persistent state {self.state_path}: {exc}") from exc
+            raise AgentError(f"cannot read persistent state {path}: {exc}") from exc
         if not isinstance(state, dict):
-            raise AgentError(f"unsupported or invalid state file: {self.state_path}")
+            raise AgentError(f"unsupported or invalid state file: {path}")
         return state
+
+    def _read_recovery_state(self, task: str) -> tuple[dict[str, Any], dict[str, Any]]:
+        self._recovered_from_history = False
+        try:
+            state = self._read_state()
+            return state, validate_checkpoint(state, task)
+        except (AgentError, TypeError, ValueError, KeyError, UnicodeError) as primary_error:
+            candidates = []
+            # Only published historical images qualify; temporary files never do.
+            for path in self.checkpoint_history.glob("generation-*.json"):
+                try:
+                    state = self._read_state(path)
+                    checkpoint = validate_checkpoint(state, task)
+                except (AgentError, TypeError, ValueError, KeyError, UnicodeError):
+                    continue
+                candidates.append((checkpoint["generation"], state["version"], state, checkpoint))
+            if not candidates:
+                raise primary_error
+            _, _, state, checkpoint = max(candidates, key=lambda item: item[:2])
+            self._recovered_from_history = True
+            return state, checkpoint
+
+    @staticmethod
+    def _sync_directory(path: Path) -> None:
+        directory_fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+
+    def _preserve_previous_checkpoint(self, state: dict[str, Any]) -> None:
+        if not self.state_path.exists():
+            return
+        try:
+            previous = self._read_state()
+            checkpoint = validate_checkpoint(previous, state["task"]["original"])
+        except (AgentError, TypeError, ValueError, KeyError, UnicodeError):
+            return  # Initial creation or repair from a validated historical image.
+        if checkpoint == state.get("recovery_checkpoint"):
+            return
+        self.checkpoint_history.mkdir(exist_ok=True)
+        self._sync_directory(self.state_dir)
+        path = self.checkpoint_history / f"generation-{checkpoint['generation']:08d}-{checkpoint['sha256']}.json"
+        if path.exists():
+            return  # Historical generations are immutable; no retention deletion.
+        tmp = self.checkpoint_history / f".checkpoint.tmp.{os.getpid()}"
+        with open(tmp, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(previous, ensure_ascii=False, indent=2, allow_nan=False) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+        self._sync_directory(self.checkpoint_history)
 
     def load(self) -> dict[str, Any]:
         state = self._read_state()
@@ -106,6 +164,7 @@ class StateStore:
     def _write_atomic(self, state: dict[str, Any]) -> None:
         tmp = self.state_dir / f".state.json.tmp.{os.getpid()}"
         data = json.dumps(state, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
+        self._preserve_previous_checkpoint(state)
         with open(tmp, "w", encoding="utf-8") as handle:
             handle.write(data)
             handle.flush()
@@ -113,11 +172,7 @@ class StateStore:
         os.replace(tmp, self.state_path)
         # Persist the directory entry after publishing the complete file image.
         # If this fails, publication may already be visible; never claim rollback.
-        directory_fd = os.open(self.state_dir, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        self._sync_directory(self.state_dir)
 
     def _append_log(self, payload: dict[str, Any]) -> None:
         event = {"at": _now(), **payload}

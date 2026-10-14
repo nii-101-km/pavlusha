@@ -65,6 +65,45 @@ def run_script(root, replies, *, extra=(), shell_hook=None, eof=None, task='task
 
 
 class LifecycleTests(unittest.TestCase):
+    def test_periodic_checkpoint_restores_current_state_and_handoff_after_restart(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            seen, result, error = run_script(root, [
+                init_turn(), turn({'action': 'shell', 'command': 'verify'}),
+                done('verify'),
+                turn({'action': 'finish', 'summary': 'blocked until checkpoint'}),
+                review('Next: finish; verification already passed'),
+                AgentError('simulated stop'),
+            ], extra=['--project-review-every', '1'])
+            self.assertIsNone(result)
+            self.assertEqual(error, 'simulated stop')
+            self.assertIn('PERIODIC PROJECT STATE REVIEW', str(seen[3]))
+            self.assertIn('INITIAL_PLAN', str(seen[5]))  # periodic commit retains History
+            self.assertFalse((root/'state/history_archive.jsonl').exists())
+            state = StateStore(root/'state', 'task').load()
+            self.assertEqual(state['recovery_checkpoint']['kind'], 'high')
+            self.assertEqual(state['recovery_checkpoint']['project_state'], state['project_state'])
+            seen, result, error = run_script(root, [turn({'action': 'finish', 'summary': 'done'})],
+                                            extra=['--project-review-every', '1'])
+            self.assertEqual(result, 0, error)
+            self.assertIn('Next: finish; verification already passed', str(seen[0]))
+            self.assertNotIn('INITIAL_PLAN', str(seen[0]))
+            state = StateStore(root/'state', 'task').load()
+            self.assertEqual([w['status'] for w in state['project_state']['work']], ['DONE', 'DONE'])
+
+    def test_periodic_empty_handoff_does_not_advance_checkpoint(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _, result, error = run_script(root, [
+                init_turn(), turn({'action': 'shell', 'command': 'verify'}),
+                done('verify'), review('  '), AgentError('simulated stop'),
+            ], extra=['--project-review-every', '1'])
+            self.assertIsNone(result)
+            state = StateStore(root/'state', 'task').load()
+            self.assertEqual(state['recovery_checkpoint']['generation'], 1)
+            restored = StateStore(root/'state', 'task', cold_restart=True).load()
+            self.assertEqual(restored['project_state'], state['recovery_checkpoint']['project_state'])
+
     def test_periodic_project_update_recovers_malformed_envelope(self):
         update = {'action': 'project_update', 'changes': [
             {'op': 'add_design', 'decision': 'Use the existing implementation', 'rationale': 'Inspected files'}
@@ -74,7 +113,7 @@ class LifecycleTests(unittest.TestCase):
             root = Path(tmp)
             seen, result, error = run_script(root, [
                 init_turn(), turn({'action': 'shell', 'command': 'inspect'}),
-                malformed, malformed, turn(update), done('inspect'),
+                malformed, malformed, turn(update), done('inspect'), review('Next: finish'),
                 turn({'action': 'finish', 'summary': 'done'}),
             ], extra=['--project-review-every', '1'])
             self.assertEqual(result, 0, error)
@@ -90,7 +129,7 @@ class LifecycleTests(unittest.TestCase):
             self.assertEqual(len(state['project_state']['design']), 1)
             self.assertEqual(state['project_state']['last_review_operation'], 1)
             logs = [json.loads(line) for line in (root/'state/state.log').read_text().splitlines()]
-            self.assertEqual(sum(x['kind'] == 'periodic_review_acknowledged' for x in logs), 1)
+            self.assertEqual(sum(x['kind'] == 'project_review_completed' for x in logs), 1)
             self.assertFalse((root/'state/history_archive.jsonl').exists())
 
     def test_three_malformed_project_updates_keep_invalid_action_limit(self):
@@ -210,18 +249,21 @@ class LifecycleTests(unittest.TestCase):
                 archive = [json.loads(x) for x in (root/'state/history_archive.jsonl').read_text().splitlines()]
                 self.assertEqual({x['step'] for x in archive}, {1,2,3,4})
 
-    def test_handoff_replaced_and_periodic_review_does_not_replace_it(self):
+    def test_periodic_handoff_stays_on_disk_until_high_refreshes_prefix(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             seen, result, error = run_script(root, [
                 init_turn(), done('verified'), review('FIRST_HANDOFF'),
                 turn({'action':'shell','command':'verify'}),
-                turn({'action':'project_review_skip'}), review('LATEST_HANDOFF'),
+                review('PERIODIC_HANDOFF'), review('LATEST_HANDOFF'),
                 turn({'action':'finish','summary':'done'}),
             ], extra=['--history-high','2','--project-review-every','1'])
             self.assertEqual(result, 0, error)
             self.assertIn('PERIODIC PROJECT STATE REVIEW', str(seen[4]))
-            self.assertIn('FIRST_HANDOFF', str(seen[5]))
+            self.assertIn('PERIODIC_HANDOFF', str(seen[5]))
+            handoff = next(m for m in seen[5] if m['content'].startswith('CHECKPOINT HANDOFF'))
+            self.assertIn('FIRST_HANDOFF', handoff['content'])
+            self.assertNotIn('PERIODIC_HANDOFF', handoff['content'])
             self.assertIn('LATEST_HANDOFF', str(seen[6]))
             self.assertNotIn('FIRST_HANDOFF', str(seen[6]))
             state = StateStore(root/'state', 'task').load()

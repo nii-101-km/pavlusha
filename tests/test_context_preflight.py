@@ -86,7 +86,8 @@ class PreflightTests(unittest.TestCase):
             replies = incident_replies()
             # A checkpoint is no longer justified at provider usage 22709.
             replies[4] = turn({'action':'finish', 'summary':'done'})
-            seen, result, error = run_script(Path(tmp), replies, extra=INCIDENT_OPTIONS, task=INCIDENT_TASK)
+            seen, result, error = run_script(Path(tmp), replies,
+                                            extra=[*INCIDENT_OPTIONS, '--project-review-every', '0'], task=INCIDENT_TASK)
             self.assertEqual(result, 0, error)
             self.assertFalse(required(seen[4]))
             # Preserve the exact previous numerical witness with a HIGH prefix.

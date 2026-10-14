@@ -62,6 +62,9 @@ def build_bwrap_command(
             args += ["--ro-bind", str(target), str(target)]
 
     args += [
+        "--dir", "/opt/pavlusha/bin",
+        "--ro-bind", os.path.join(os.path.dirname(__file__), "workspace_tools.py"),
+        "/opt/pavlusha/bin/pavlusha-tools",
         "--proc", "/proc",
         "--dev", "/dev",
     ]
@@ -76,13 +79,13 @@ def build_bwrap_command(
         "--setenv", "HOME", "/work",
         "--setenv", "USER", "worker",
         "--setenv", "LOGNAME", "worker",
-        "--setenv", "PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "--setenv", "PATH", "/opt/pavlusha/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         "--setenv", "TMPDIR", "/tmp",
         "--setenv", "XDG_CACHE_HOME", "/work/.cache",
         "--setenv", "PIP_CACHE_DIR", "/work/.cache/pip",
         "--setenv", "NPM_CONFIG_CACHE", "/work/.cache/npm",
         "--setenv", "DEBIAN_FRONTEND", "noninteractive",
-        "/bin/bash", "--noprofile", "--norc", "-lc", shell_command,
+        "/bin/bash", "--noprofile", "--norc", "-o", "pipefail", "-lc", shell_command,
     ]
     return args
 

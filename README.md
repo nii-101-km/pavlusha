@@ -7,7 +7,7 @@
 Persistent Autonomous Verification & Local Utility
 Shell-Handling Agent
 
-Version **0.5.0**.
+Version **0.6.0**.
 
 P.A.V.L.U.S.H.A. is a deliberately small local agent runtime. One Worker model
 chooses actions; the Core/controller validates runtime invariants, executes
@@ -83,7 +83,7 @@ python agent.py \
 
 Match `--model` to your loaded model. LM Studio's context capacity is discovered
 automatically; use `--worker-context-budget N` to override it. Effort values are provider-defined;
-omit `--reasoning-effort` to retain its default. The State directory must remain outside
+Worker defaults to `--reasoning-effort low`; pass another value to override it. The State directory must remain outside
 `--workdir`. Use a separate State directory for each new TASK; retain it and the same TASK
 text when recovering an interrupted run.
 
@@ -112,11 +112,11 @@ Set credentials in the controller environment, without committing their values.
 | --- | --- |
 | `--workdir PATH` / `--state-dir PATH` | Persistent work files / separate controller State. Default State: `<workdir>.pavlusha-state`. |
 | `--interactive` / `--no-interactive` | Default-on communication and safe intervention within one active TASK; FINISH terminates the runtime. |
-| `--reasoning-effort STRING` | Worker provider passthrough; omitted by default. |
+| `--reasoning-effort STRING` | Worker provider passthrough; defaults to `low`. |
 | `--functions MODULE.py` | Repeatable: trusted local Python modules with globally unique function names; synchronous and not sandboxed. See [custom functions](docs/custom-functions.md). |
 | `--worker-context-budget N` | Override context capacity; omission discovers the loaded LM Studio context length. |
 | `--project-map on` | Default frozen checkpoint navigation snapshot; `off` disables; ordinary steps do not refresh it. |
-| `--project-review-every 10` | Periodic review after executed shell/function operations; `0` disables it. |
+| `--project-review-every 10` | Commit State + handoff every 10 executed shell/function operations, retaining History; `0` disables periodic checkpoints. |
 | `--history-high 200` | Request a fresh HIGH checkpoint at 200 retained Worker steps; the existing context trigger can fire earlier. |
 | `--history-context-high 0.85` | Request HIGH when the last successful provider prompt usage reaches this fraction of context capacity. |
 | `--max-steps -1` | Default unlimited Worker turns; a positive value enables the existing step watchdog. |
@@ -194,6 +194,30 @@ shell commands resolve `/etc/resolv.conf` anew and mount its target read-only wh
 it is a symlink, without exposing host `/run`/sockets or writing resolver copies
 into `/work`. A missing resolver fails explicitly. Network-off commands retain
 `--unshare-all` with no added resolver mount.
+
+Shell commands use Bash `pipefail`, so `tests | tail` preserves a failing test status.
+Later commands can still mask it. For explicit checks use the sandbox helper:
+
+```bash
+pavlusha-tools run-check --timeout 60 -- python3 -m unittest discover -s tests
+pavlusha-tools read app.py --start 200 --count 200
+pavlusha-tools find app.py '^def |^class '
+pavlusha-tools replace app.py --old-file .scratch/old.txt --new-file .scratch/new.txt
+```
+
+`read --start 200 --count 200` returns numbered lines 200–399 (or fewer at EOF).
+Omitting both `--count` and `--end` reads up to 200 lines from `--start`.
+The inclusive `--end` remains supported; use either `--count` or `--end`, not both.
+Oversized ranges are rejected with an exact suggested correction, rather than silently truncated.
+
+`run-check` returns the command's exit code (124 on timeout), prints a JSON report,
+and retains full combined output in `/work/.scratch/checks/`. Its timeout must be
+shorter than the enclosing shell action timeout. The replacement checks the exact
+occurrence count (one by default, configurable with `--count`) before writing.
+All helpers run inside the existing sandbox and accept file paths only within `/work`.
+Each shell invocation has a fresh `/tmp` and process/network namespace; intermediate
+files belong in `/work/.scratch`. A shell server and its checks must run in the same
+invocation. A server/browser started together in `gui_start` lasts for that GUI session.
 
 Sandbox environments are cleared. Keep custom State directories outside `/work`.
 Work files, State, reasoning/history diagnostics and GUI captures may contain private
@@ -284,8 +308,10 @@ with the normal shell result and no previous History or inference/KV state. Mate
 durable changes with `project_update` before selecting this mode. Omitted/false release
 keeps existing shell behavior. See [Worker release](docs/worker-release.md) for backend limits.
 
-Periodic review acknowledges or updates working State without refreshing frozen
-snapshots or clearing History. Successful HIGH commits reviewed State and a bounded
+Periodic review requires `project_review_complete` with a nonempty bounded handoff,
+after any needed `project_update`. It commits State and handoff together on disk,
+retaining History and the unchanged State/Map/handoff prompt prefix. Updating State alone does not complete
+the periodic checkpoint. Successful HIGH commits reviewed State and a bounded
 handoff, refreshes Map/State snapshots, archives all prior History and starts empty.
 Rejected reviews preserve History; ordinary State updates do not replace the frozen
 prompt snapshot. Archives are never automatically restored into Worker context.
@@ -293,8 +319,13 @@ prompt snapshot. Archives are never automatically restored into Worker context.
 Restart with the **same task, workdir and state-dir**, without `--reset-state`. Cold
 startup loads only the validated committed generation/handoff, preserves the factual
 operation ledger and newer work files, rebuilds Map, and discards post-checkpoint
-working State/history. Missing/invalid committed data fails as **RECOVERY FAILED**;
-there is no reconstruction from logs/files, legacy migration or backup fallback.
+working State/history. If the primary image is missing or invalid, startup selects the
+newest validated whole generation from `checkpoint-history/` and atomically repairs
+the primary. With no valid generation, recovery fails as **RECOVERY FAILED**;
+there is no reconstruction from logs/files or legacy migration. Historical generations
+are immutable. Checkpoint history currently grows without an automatic size limit
+or retention deletion. Reset keeps old history in a
+separate `checkpoint-history.reset-*` directory excluded from the new run's recovery.
 A nonexistent or completely empty State directory starts normally; `--reset-state` intentionally starts
 fresh controller State while preserving work files. State is atomically committed;
 it does not guarantee arbitrary work-file durability or universal power-loss recovery.
@@ -386,7 +417,19 @@ python -m compileall -q agent.py pavlusha_agent tests tools
 ```
 
 Install `requirements-test.txt` first (controller dependencies plus the independent
-JSON Schema validator used by contract tests). Ordinary provider tests use scripted replies,
+JSON Schema validator used by contract tests). To reproduce the 0.6.0 verification
+environment, use a clean virtual environment and the pinned runtime/test dependencies:
+
+```bash
+python3 -m venv /tmp/pavlusha-060-tests
+/tmp/pavlusha-060-tests/bin/python -m pip install -r requirements-test-lock.txt
+/tmp/pavlusha-060-tests/bin/python -m pip check
+env -u PYTHONPATH -u PYTHONHOME PYTHONDONTWRITEBYTECODE=1 /tmp/pavlusha-060-tests/bin/python -B -m unittest discover -s tests
+```
+
+The pinned environment targets CPython 3.12 on Linux x86_64, with no system-site
+packages or `PYTHONPATH` fallback. See [0.6.0 release notes](docs/release-0.6.0.md)
+for verification scope and optional test dependencies. Ordinary provider tests use scripted replies,
 without paid API calls. Browser/network integration tests are opt-in through
 `PAVLUSHA_TEST_GUI_BROWSER=1` / `PAVLUSHA_LIVE_NETWORK=1`; real Xvfb capture runs
 and physical-key tests run when their host tools are available. Office tests may
@@ -426,8 +469,8 @@ Worker can use `message` to speak and continue, or `wait_for_user` when input is
 See [interactive lifecycle, boundaries, recovery and limitations](docs/interactive-chat.md).
 
 `--reasoning-effort` accepts a string and passes it unchanged in every Worker provider
-request, including after `release_worker`. Omission preserves provider/model default
-behavior. Values are not locally normalized or replaced: provider rejection remains an
+request, including after `release_worker`. Omission sends `low`.
+Explicit values are not locally normalized or replaced: provider rejection remains an
 explicit runtime error, with no hidden fallback. This is a request option; the existing
 model unload/restore configuration handling is unchanged.
 

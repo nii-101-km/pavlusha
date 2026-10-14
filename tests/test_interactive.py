@@ -17,7 +17,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from pavlusha_agent.cli import build_parser
-from pavlusha_agent.core import AgentError, ShellResult
+from pavlusha_agent.core import AgentError, ProviderTurn, ShellResult
 from pavlusha_agent.interactive import InteractiveSession, SessionEnded, validate_chat_action
 from pavlusha_agent.live import LiveConsoleRenderer
 from pavlusha_agent.provider import ProviderContextOverflow
@@ -113,6 +113,23 @@ class InteractiveTests(unittest.TestCase):
         self.assertEqual(waiting, [])
         self.assertIn('P.A.V.L.U.S.H.A.:\nFinished.', output)
         self.assertEqual(state['run']['status'], 'finished')
+
+    def test_length_feedback_preserves_history_and_never_dispatches_truncated_action(self):
+        for content, instruction in [
+            ('', 'Stop replanning'),
+            (json.dumps({'action': 'shell', 'command': 'must not execute'}),
+             'Send only a small part')]:
+            with self.subTest(content=content):
+                truncated = ProviderTurn(content=content, reasoning_content='RETAIN THIS HYPOTHESIS',
+                                         finish_reason='length', prompt_tokens=200)
+                _, seen, commands, _, _, _, _ = self.run_case([
+                    init_turn(), truncated, turn({'action': 'shell', 'command': 'small check'}),
+                    done('verified'), turn({'action': 'finish', 'summary': 'Done'})])
+                self.assertEqual(commands, ['small check'])
+                retry = str(seen[2])
+                self.assertIn('RETAIN THIS HYPOTHESIS', retry)
+                self.assertIn('no action was executed', retry)
+                self.assertIn(instruction, retry)
 
     def test_pause_during_inference_discards_proposal_with_message(self):
         _, seen, commands, waiting, _, state, persisted = self.run_case([

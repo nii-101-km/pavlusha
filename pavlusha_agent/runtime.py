@@ -179,7 +179,10 @@ def _validate_worker_action(turn, args, *, chat, functions, expert, gui_enabled)
     """Decode a complete reply and validate only actions enabled for this run."""
     raw = turn.content
     if turn.finish_reason == "length":
-        raise AgentError("Worker completion was truncated at its token ceiling; no action was executed")
+        raise AgentError(
+            "Worker completion was truncated at its token ceiling; no action was executed. "
+            "Send only a small part of the change next. Do not repeat the whole file "
+            "or merely change how it is written")
     action = _extract_json_object(raw)
     requested_kind = action.get("action")
     if requested_kind in {"message", "wait_for_user"}:
@@ -225,17 +228,20 @@ def _project_action_rejection(
             "Materialize durable changes with project_update if needed, then call project_review_complete. "
             "Normal shell/finish actions are blocked until the checkpoint is complete."
         )
-    if project_state.get("initialized") and periodic_review_due and kind not in {"project_update", "project_review_skip", "message", "wait_for_user"}:
+    if project_state.get("initialized") and periodic_review_due and kind not in {"project_update", "project_review_complete", "message", "wait_for_user"}:
         return (
             f"PERIODIC PROJECT STATE REVIEW: {review_every} {operation_label} operations completed. "
             "If durable DESIGN/WORK/DEVIATION information changed, record it now with project_update. "
-            "Otherwise call project_review_skip. This is not a history checkpoint; project_review_complete is unavailable here."
+            "Then call project_review_complete with a short handoff to commit State and continuation together. "
+            "A project_update alone does not complete this checkpoint."
         )
-    if kind == "project_review_complete" and not checkpoint_reason:
+    if kind == "project_review_complete" and not (checkpoint_reason or periodic_review_due):
         return (
-            "PROJECT REVIEW REJECTED: no history checkpoint is required. "
-            "project_review_complete is reserved for a Core-required HIGH history checkpoint."
+            "PROJECT REVIEW REJECTED: no checkpoint is required. "
+            "project_review_complete is reserved for a Core-required periodic or HIGH checkpoint."
         )
+    if kind == "project_review_skip":
+        return "PROJECT REVIEW REJECTED: use project_review_complete with a short handoff; periodic checkpoints cannot be skipped."
 
     return None
 
@@ -490,9 +496,10 @@ class _AgentRuntime:
         if review_due(self.project_state, operation_count=operation_count, every=self.args.project_review_every):
             periodic_prompt = {"role": "user", "content": (
                 f"PERIODIC PROJECT STATE REVIEW\n{self.args.project_review_every} {self.operation_label} operations completed since the last review.\n"
-                "This is an attention questionnaire, NOT a history checkpoint. Normal shell/finish actions are temporarily unavailable for this one review turn. "
+                "Commit a recovery checkpoint with current Project State and a short operational handoff. Recent History is retained. "
                 "If durable DESIGN/WORK/DEVIATION information changed, record it with project_update. "
-                "If nothing durable needs recording, call project_review_skip. Do not call project_review_complete."
+                "Then call project_review_complete with the immediate focus, next action and unfinished verification. "
+                "Even if State is unchanged, supply a current handoff. Normal shell/finish actions remain blocked until completion."
             )}
         history_reason = (
             f"recent history reached {self.args.history_high} complete Worker steps; "
@@ -673,7 +680,11 @@ class _AgentRuntime:
                 self.recent.append({"role": "user", "content": (
                     "The previous worker attempt produced no final action"
                     + (f" (finish_reason={turn.finish_reason})" if turn.finish_reason else "")
-                    + ". Its reasoning was retained for continuation. Continue and produce one valid JSON action."
+                    + ". Its reasoning was retained for continuation. "
+                    + ("The token ceiling was reached; no action was executed. Stop replanning and "
+                       "take the nearest small check or edit as one valid JSON action."
+                       if turn.finish_reason == "length" else
+                       "Continue and produce one valid JSON action.")
                 )})
                 return None
             detail = f"finish_reason={turn.finish_reason}" if turn.finish_reason else "no finish_reason"
@@ -774,8 +785,6 @@ class _AgentRuntime:
                 raise AgentError("Project State update was rejected three times in a row") from exc
             return None
         self.invalid_replies = 0
-        if self.periodic_review_due:
-            self.project_state = self.store.acknowledge_periodic_review(step=self.step)
         self.consecutive_loop_recoveries = 0
         self.recent.append({"role": "user", "content": "PROJECT STATE UPDATED:\n" + json.dumps(self.project_state, ensure_ascii=False)})
         return None
@@ -791,7 +800,10 @@ class _AgentRuntime:
         return None
 
     def _complete_project_review(self, data: dict[str, object]) -> int | None:
+        periodic = self.periodic_review_due
         try:
+            if periodic and not data["handoff"]:
+                raise AgentError("periodic checkpoint requires a nonempty operational handoff")
             self.project_state = self.store.complete_project_review(
                 step=self.step, note=data.get("note", ""), handoff=data["handoff"])
         except AgentError as exc:
@@ -806,16 +818,19 @@ class _AgentRuntime:
             return None
         self.invalid_replies = 0
         self.consecutive_loop_recoveries = 0
-        self.handoff_prompt = handoff_message(data["handoff"])
         self.recent.append({"role": "user", "content": "PROJECT REVIEW COMPLETE. Durable recovery checkpoint accepted."})
-        # Only a Core-required HIGH checkpoint may refresh the frozen authoritative prefix.
-        if self.project_map is not None:
-            self.project_map.refresh()
-            self.map_prompt = self.project_map.message()
-        self.state_prompt = project_state_message(self.project_state)
+        # Periodic saves publish recovery data without changing the cached prefix.
+        # Only a history reset promotes the new State/Map/handoff into that prefix.
+        if self.checkpoint_reason:
+            self.handoff_prompt = handoff_message(data["handoff"])
+            if self.project_map is not None:
+                self.project_map.refresh()
+                self.map_prompt = self.project_map.message()
+            self.state_prompt = project_state_message(self.project_state)
+            if self.live is not None:
+                self.live.prefix_changed("checkpoint snapshot refresh")
         self.checkpoint_active = False
-        if self.live is not None:
-            self.live.prefix_changed("checkpoint snapshot refresh")
+        self.periodic_review_due = False
         if self.checkpoint_reason:
             self.pending_context_notice = _reset_checkpoint_history(
                 self.state_dir, self.recent, self.budget, self.experiment, step=self.step,

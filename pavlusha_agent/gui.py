@@ -341,22 +341,13 @@ def annotate_png(clean_png: bytes, gesture: dict[str, Any] | None) -> bytes:
         _label(draw, (x + 14, y + 12), {"click": "YOUR CLICK", "double_click": "DOUBLE CLICK", "right_click": "RIGHT CLICK"}[kind], image.size)
     elif kind == "drag":
         x1, y1, x2, y2 = (int(gesture[name]) for name in ("x1", "y1", "x2", "y2"))
-        draw.line((x1, y1, x2, y2), fill=accent, width=4)
-        draw.ellipse((x1 - 6, y1 - 6, x1 + 6, y1 + 6), fill=accent)
-        # Small arrow head at the actual release point.
-        dx, dy = x2 - x1, y2 - y1
-        length = max(1.0, math.hypot(dx, dy))
-        ux, uy = dx / length, dy / length
-        px, py = -uy, ux
-        back_x, back_y = x2 - ux * 15, y2 - uy * 15
-        points = [
-            (x2, y2),
-            (round(back_x + px * 7), round(back_y + py * 7)),
-            (round(back_x - px * 7), round(back_y - py * 7)),
-        ]
-        draw.polygon(points, fill=accent)
-        draw.ellipse((x2 - 5, y2 - 5, x2 + 5, y2 + 5), outline=(255, 255, 255, 255), width=2)
-        _label(draw, (round((x1 + x2) / 2) + 10, round((y1 + y2) / 2) + 10), "DRAG", image.size)
+        # Leave the connector centres and the application wire unobscured.
+        for x, y in ((x1, y1), (x2, y2)):
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                draw.line((x + dx * 5, y + dy * 5, x + dx * 11, y + dy * 11),
+                          fill=accent, width=2)
+        _label(draw, (x1 + 14, y1 - 30), "START", image.size)
+        _label(draw, (x2 + 14, y2 + 12), "END", image.size)
 
     image = Image.alpha_composite(image, overlay).convert("RGB")
     output = io.BytesIO()
@@ -377,7 +368,7 @@ class GuiObservation:
             "click": "YOUR CLICK",
             "double_click": "DOUBLE CLICK",
             "right_click": "RIGHT CLICK",
-            "drag": "DRAG",
+            "drag": "START / END",
         }.get(kind)
         annotation = (
             f" The visible {label} marker is a Core annotation of your immediately preceding mouse action, "

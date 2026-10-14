@@ -57,8 +57,9 @@ project_map.json                   deterministic world-derived cache; outside ge
 history_archive.jsonl              exact archived history; never auto-restored
 ```
 
-There is only one envelope. A new HIGH replaces it, rather than accumulating generations or
-handoffs. Working State and the envelope are separate views in the same atomic file image;
+The primary contains one envelope. Before a new periodic or HIGH checkpoint replaces it,
+the previous validated full image is atomically preserved in `checkpoint-history/`.
+Working State and the envelope are separate views in the same atomic file image;
 this preserves the last committed generation even when review updates the live working view.
 The handoff exists only inside the committed envelope; startup and cold restart use that value.
 The digest binds State, handoff and metadata together; it
@@ -71,12 +72,14 @@ is an integrity check, not authentication or semantic verification.
 3. Build a complete envelope with generation ID, State, handoff, task and runtime metadata.
 4. Validate the candidate structurally and compute/check the digest. Until this succeeds, no
    published bytes change. Initialization creates generation 1 (`initial`) with empty handoff;
-   each HIGH increments the prior generation (`high`).
+   each accepted review increments the prior generation using the existing `high` envelope kind.
+   Periodic checkpoints require a nonempty operational handoff.
 5. Serialize the complete containing controller image to `.state.json.tmp.<PID>` in the same
    directory. Flush and fsync the candidate file.
 6. Atomically `os.replace(candidate, state.json)`. This is the logical publication boundary.
 7. Open/fsync the containing state directory and close its descriptor.
-8. Continue the existing audit/Map/frozen-prefix/history archival/reset path.
+8. Periodic checkpoints retain History and the existing prompt snapshots.
+   HIGH checkpoints refresh Map/State/handoff snapshots, then archive and reset History.
 
 All State/handoff/metadata changes are in one replacement. A failure while building or writing a
 candidate, or before replacement, leaves the prior envelope in the published file. A process death
@@ -84,9 +87,9 @@ immediately after replacement exposes the complete new envelope. If directory fs
 audit/Map/archive step fails, replacement may already have succeeded; the code does not claim
 rollback. Cold restart selects the published file's envelope, never a partially constructed temp.
 
-Ordinary updates, periodic acknowledgements, shell ledger writes and finish preserve the current
+Ordinary updates, shell ledger writes and finish preserve the current
 envelope. They do not publish a new recovery generation. This deliberately means a cold restart
-loads the last initialized/HIGH checkpoint, rather than later working mutations (including any
+loads the last committed checkpoint, rather than later working mutations (including any
 post-checkpoint DONE update). A successful finish is not automatically converted into HIGH.
 
 ## Structural validation
@@ -151,8 +154,15 @@ rolling working State back; it does not authorize a runtime cold restart. Every 
 6. Continue existing startup: refresh deterministic Map from current `/work`, construct the Worker
    prefix and present matching State/handoff. Recent History starts empty as before.
 
-Policy is fail-closed, with **no automatic fallback**: corrupt committed data fails even if a valid
-old-looking temp file exists. Incomplete candidates beside a valid committed file are ignored.
+Startup first validates the primary image. If it is missing or invalid, it selects the newest
+validated complete image from `checkpoint-history/generation-*.json`, restores State and
+handoff from that single envelope, and atomically repairs the primary. Temporary files never
+qualify, even if they contain complete JSON. With no valid committed image, recovery fails closed.
+Fallback uses the selected image's ledger/counters too; newer operations from a corrupt primary
+are not reconstructed or mixed in. Historical images are immutable; checkpoint history currently
+grows without an automatic size limit or retention deletion. Reset moves them into
+`checkpoint-history.reset-*`, preserving them while excluding
+them from the new run's automatic recovery.
 A nonexistent or completely empty state directory starts a new run rather than recovery.
 A nonempty state directory requires a valid committed state: an uninitialized controller file,
 metadata/handoff alone, or useful project files cannot authorize recovery. No `project_init` request or provider call occurs
@@ -178,8 +188,9 @@ has authorized recovery; it cannot substitute for State.
 - Count/context HIGH enter the same existing gate and publish via accepted `project_review_complete`.
   Frozen State/Map refresh and full-history reset still follow successful publication. Rejected
   checkpoint validation leaves history intact. The context-budget guard was not modified.
-- Periodic review still permits `project_update`/`project_review_skip`, acknowledges operation count,
-  preserves the frozen prompt/history, and never publishes or increments the committed envelope.
+- Periodic review permits `project_update`/`project_review_complete`. Updates keep the gate closed;
+  completion requires a nonempty handoff and commits State/handoff with the operation count.
+  It advances the committed generation while retaining History and the unchanged prompt snapshots.
 - Reasoning-loop off/observe/recover (default off at the time of this audit;
   now recover), detector, HTTP interruption, diagnostic-only
   partial reasoning, one-turn marker and three retry attempts were not changed. Loop interruption
@@ -201,13 +212,14 @@ has authorized recovery; it cannot substitute for State.
 | Failure immediately after replace | New complete pair loads; no mixture |
 | Directory fsync error after replace | New visible complete pair loads; no rollback claim |
 | Successful HIGH | New matching generation loads and replaces handoff |
-| Corrupt candidate vs corrupt committed image | Candidate ignored; corrupt authoritative image fails |
+| Corrupt candidate vs corrupt committed image | Candidate ignored; corrupt primary falls back to the newest valid published historical image, or fails if none exists |
 | No generation, even with useful `/work`, Map/logs/handoff | Explicit failure, no provider/Map initialization |
-| Mixed State/handoff/version/operation metadata | Integrity/structure validation rejects mismatch |
-| Structurally invalid Project State, even with recalculated digest | Explicit failure, no repair |
+| Mixed State/handoff/version/operation metadata | Invalid image rejected; recovery selects a valid historical generation without mixing fields, or fails if none exists |
+| Structurally invalid Project State, even with recalculated digest | Invalid image rejected; valid historical generation repairs the primary, otherwise recovery fails |
 | 2048-byte boundaries and invalid encoding | Exact limit accepted; excess rejected without publication |
 | Initialization, explicit reset, unlimited steps | Existing intended lifecycle retained |
-| Periodic review and reasoning-loop recovery | Committed generation/handoff not advanced by these mechanisms |
+| Periodic review | Matching State/handoff generation advances; History is retained |
+| Reasoning-loop recovery | Committed generation/handoff not advanced |
 
 `tests/fixtures/atomic_runtime_process.py` executes the production runtime in a **fresh Python
 interpreter**; only provider responses and shell command effects are scripted. Production StateStore,
@@ -253,9 +265,9 @@ the previous committed image; a failure after replace may have committed the new
 This is not a tested universal power-loss guarantee. Durability depends on the OS/filesystem/storage
 honoring fsync/rename. Newly created ancestor-directory entries are not individually fsynced, audit
 logs and arbitrary `/work` writes are not covered by this protocol, and no physical power-loss or
-faulty-storage test was performed. A missing/corrupt authoritative file after storage failure still
-fails recovery rather than guessing. There is no backup-generation fallback or database/journal
-framework. One controller writer per state directory remains the existing assumption; concurrent
+faulty-storage test was performed. A missing/corrupt primary falls back only to independently
+validated historical images; if none survive, recovery fails rather than guessing. No database/journal
+framework was added. One controller writer per state directory remains the existing assumption; concurrent
 controllers are not newly supported. The envelope digest does not authenticate hostile edits or
 prove Worker evidence true. No new live model inference was run.
 

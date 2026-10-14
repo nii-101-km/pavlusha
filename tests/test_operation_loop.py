@@ -163,9 +163,10 @@ class OperationLoopRuntimeTests(unittest.TestCase):
     def test_reviews_do_not_hide_repeated_operations(self):
         result, _, _, waiting, _, _, _ = self.run_case([
             init_turn(), turn({'action': 'shell', 'command': 'A'}),
-            turn({'action': 'project_review_skip'}), turn({'action': 'shell', 'command': 'A'}),
-            turn({'action': 'project_review_skip'}), turn({'action': 'shell', 'command': 'A'}),
-            done('verified'), turn({'action': 'finish', 'summary': 'Done'})],
+            turn({'action': 'project_review_complete', 'handoff': 'Next: run A'}), turn({'action': 'shell', 'command': 'A'}),
+            turn({'action': 'project_review_complete', 'handoff': 'Next: run A'}), turn({'action': 'shell', 'command': 'A'}),
+            done('verified'), turn({'action': 'project_review_complete', 'handoff': 'Next: finish'}),
+            turn({'action': 'finish', 'summary': 'Done'})],
             lines=('\n',), extra=('--project-review-every', '1'))
         self.assertEqual(result, 0)
         self.assertEqual(waiting, [(6, ['A', 'A', 'A'])])

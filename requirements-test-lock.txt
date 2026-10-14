@@ -1,0 +1,17 @@
+# Pavlusha 0.6.0 test environment: Linux x86_64, CPython 3.12.
+# Runtime and test dependencies, including transitives, resolved from requirements-test.txt.
+attrs==26.1.0
+jsonschema==4.26.0
+jsonschema-specifications==2025.9.1
+markdown-it-py==4.2.0
+mdurl==0.1.2
+pillow==12.3.0
+Pygments==2.21.0
+python-xlib==0.33
+referencing==0.37.0
+rich==14.3.4
+rpds-py==2026.9.1
+six==1.17.0
+tree-sitter==0.25.2
+tree-sitter-python==0.25.0
+typing_extensions==4.16.0

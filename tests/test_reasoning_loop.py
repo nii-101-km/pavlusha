@@ -429,7 +429,7 @@ class RuntimeRecoveryTests(unittest.TestCase):
             # Map refreshes at startup and accepted completion, never HIGH entry.
             (['--history-high','1'],'normal',{'action':'project_review_complete','handoff':'NEW_HANDOFF'},2),
             (['--history-context-high','0.2'],'x'*14000,{'action':'project_review_complete','handoff':'NEW_HANDOFF'},2),
-            (['--project-review-every','1'],'normal',{'action':'project_review_skip'},1)]:
+            (['--project-review-every','1'],'normal',{'action':'project_review_complete','handoff':'NEW_HANDOFF'},1)]:
             with self.subTest(extra=extra),tempfile.TemporaryDirectory() as tmp:
                 root=Path(tmp)
                 case=self.run_case(root,[script(SHELL,reasoning,prompt_tokens=20000 if '--history-context-high' in extra else 200),script(reasoning=LOOP),script(action),script()],extra=extra)
@@ -437,11 +437,15 @@ class RuntimeRecoveryTests(unittest.TestCase):
                 self.assertEqual(len(case['maps']),refreshes)
                 self.assertEqual(case['requests'][2]['messages'],case['requests'][1]['messages']+[RECOVERY_MESSAGE])
                 self.assertNotIn('cycleword',str(case['requests'][3]['messages']))
-                periodic=action['action']=='project_review_skip'
-                self.assertEqual(case['state']['recovery_checkpoint']['handoff'],'SEED_HANDOFF' if periodic else 'NEW_HANDOFF')
+                periodic='--project-review-every' in extra
+                self.assertEqual(case['state']['recovery_checkpoint']['handoff'],'NEW_HANDOFF')
                 if periodic:
                     self.assertIn('PERIODIC PROJECT STATE REVIEW',case['requests'][1]['messages'][-1]['content'])
                     self.assertFalse((root/'state/history_archive.jsonl').exists())
+                    handoff = next(m for m in case['requests'][3]['messages']
+                                   if m['content'].startswith('CHECKPOINT HANDOFF'))
+                    self.assertIn('SEED_HANDOFF', handoff['content'])
+                    self.assertNotIn('NEW_HANDOFF', handoff['content'])
                 else:
                     archive=(root/'state/history_archive.jsonl').read_text()
                     self.assertNotIn('cycleword',archive)

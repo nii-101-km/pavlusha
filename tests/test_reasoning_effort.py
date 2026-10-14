@@ -75,14 +75,14 @@ class ReasoningEffortTests(unittest.TestCase):
                         result, error = None, str(exc)
         return result, error, requests, commands, lifecycle
 
-    def test_omission_preserves_default_in_both_transports(self):
-        self.assertIsNone(build_parser().parse_args(['task']).reasoning_effort)
+    def test_omission_sends_low_in_both_transports(self):
+        self.assertEqual(build_parser().parse_args(['task']).reasoning_effort, 'low')
         for streaming in (False, True):
             with self.subTest(streaming=streaming):
                 result, error, requests, commands, _ = self.run_wire(streaming=streaming)
                 self.assertEqual(result, 0, error)
                 self.assertEqual(len(requests), 3)
-                self.assertTrue(all('reasoning_effort' not in r for r in requests))
+                self.assertEqual([r['reasoning_effort'] for r in requests], ['low']*3)
                 self.assertEqual(commands, [])
 
     def test_arbitrary_cli_string_is_passed_unchanged(self):
@@ -121,7 +121,7 @@ class ReasoningEffortTests(unittest.TestCase):
                     self.assertEqual(result, 0, error)
                     self.assertEqual(len(requests), 4)
                     if effort is None:
-                        self.assertTrue(all('reasoning_effort' not in r for r in requests))
+                        self.assertEqual([r['reasoning_effort'] for r in requests], ['low']*4)
                     else:
                         self.assertEqual([r['reasoning_effort'] for r in requests], [effort]*4)
                     self.assertEqual(requests[0]['model'], 'worker-instance')

@@ -77,9 +77,10 @@ Core stores your evidence but does not judge whether it is sufficient.
 BLOCKED requires a reason. SUPERSEDED requires a deviation. Do not use Project State as a file inventory; planned files belong
 under work deliverables, while current structure belongs to Project Map/current files.
 
-3) Skip a PERIODIC PROJECT STATE REVIEW when there is nothing durable to add:
-{"action":"project_review_skip"}
-This action only acknowledges the periodic questionnaire. It never refreshes snapshots or resets history.
+3) Complete a PERIODIC PROJECT STATE REVIEW even when State is unchanged:
+{"action":"project_review_complete","handoff":"immediate focus, next action, unfinished verification"}
+Update Project State first if needed, then provide a nonempty operational handoff.
+Core commits State and handoff together for restart recovery; Recent History is retained.
 
 4) Complete a required HISTORY CHECKPOINT after reviewing Project State:
 {"action":"project_review_complete","note":"optional short note","handoff":"immediate focus, next action, unfinished verification"}
@@ -114,12 +115,34 @@ the normal shell timeout, network permission and filesystem boundaries.
 
 Rules:
 - The shell starts in /work. /work is the only persistent writable host directory visible to shell commands.
+- Each shell invocation creates a fresh sandbox: /tmp and its background processes do not survive
+  the invocation. Keep intermediate files under /work/.scratch (create it when needed).
+  Start a server and perform its shell checks in the SAME command, then stop it. For browser
+  checks, start the server and browser together in gui_start; that GUI session stays alive.
+- Shell uses pipefail: a failing pipeline component makes the pipeline fail. A later successful
+  command can still mask that status. Never append echo/tail to disguise a failed check.
+- Prefer `pavlusha-tools run-check --timeout 60 -- python3 -m unittest discover -s tests`
+  for tests/checks. It executes argv directly (no shell expansion), returns the process exit code,
+  and prints JSON with status, duration, full log path under /work/.scratch/checks, and output tail.
+  Timeout returns 124. Use a shell action timeout longer than the check's timeout. Run independent
+  checks in separate actions so each result is visible. Read the saved log narrowly if needed.
+- File helpers inside the same sandbox:
+  `pavlusha-tools read path.py --start 200 --count 200` (numbered lines 200..399, at most 200);
+  Prefer --count to avoid inclusive-end arithmetic; --end remains an alternative, not combined with --count.
+  `pavlusha-tools find path.py '^def |^class '` (regex search, at most 50 matches by default);
+  `pavlusha-tools replace path.py --old-file .scratch/old.txt --new-file .scratch/new.txt`.
+  Write literal old/new text to those UTF-8 files first. Replace refuses to change the target
+  unless old text occurs exactly once; --count N explicitly permits N occurrences. These helpers
+  accept only paths inside /work; no automatic truncation or summarization bypasses Core limits.
 - Controller state is maintained outside /work. Never edit or recreate controller state files.
 - System directories are read-only. Put environments, caches and dependencies in /work.
 - Prefer non-interactive commands. Never wait for user input from a program.
 - Use network=true only when needed and granted.
 - For Python dependencies prefer a project-local .venv. Do not modify system Python.
 - Inspect existing files before broad changes. Make the smallest sufficient change, then run useful tests/checks.
+- Verify promised behavior by executing real code; a function or source string merely existing does not prove it works.
+- Before claiming verification, ask whether the check would detect that behavior being broken. Report exactly what was exercised and observed; a combined check of several changes does not establish each independently.
+- Distinguish source inspection, behavioral tests and browser checks. State unverified behavior explicitly; a test harness does not establish browser rendering or interaction.
 - Do not claim success when a command failed. Diagnose it and continue.
 - Do not access paths outside /work; they are intentionally unavailable.
 """.strip()
@@ -165,7 +188,7 @@ The latest screenshot is attached only as a transient CURRENT GUI OBSERVATION; i
 After click/double_click/right_click/drag, Core draws a marker on the observation copy only:
 - YOUR CLICK = the exact point where the previous left click was executed.
 - RIGHT CLICK = the exact point where the previous right click was executed.
-- DRAG = the exact start-to-release path of the previous drag.
+- START / END = hollow crosshairs marking where the previous drag began and ended; no path or arrow is drawn.
 These labels/markers are Core annotations and are NOT part of the application UI. The clean screenshot is retained separately by Core.
 Only the immediately preceding mouse gesture is marked; view_gui returns a clean observation with no old marker.
 Use the visible consequence plus the marker as feedback. If a click missed, correct the coordinates on the next action.
