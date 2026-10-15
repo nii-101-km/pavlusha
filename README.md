@@ -14,6 +14,13 @@ chooses actions; the Core/controller validates runtime invariants, executes
 shell/GUI actions in Linux bubblewrap, and maintains durable Project State. The Worker uses
 an OpenAI-compatible endpoint; LM Studio is the documented local provider.
 
+**Worker backend compatibility (0.6.0):** LM Studio is the only fully tested
+Worker backend for this release. Other OpenAI-compatible backends should be
+considered experimental: API compatibility alone does not guarantee support for
+all runtime features. Automatic context discovery, model release/reload and
+context-overflow recovery require backend-specific support. A short text-only
+llama.cpp smoke test, including MTP, passed; this is not a full compatibility test.
+
 ## What it does
 
 - Executes Worker-selected shell operations against a persistent work directory.
