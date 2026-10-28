@@ -1,5 +1,9 @@
 # P.A.V.L.U.S.H.A.
 
+<p align="center">
+  <img src="assets/pavlusha.png" alt="P.A.V.L.U.S.H.A. mascot holding a jar of jam" width="280">
+</p>
+
 Pavlusha is a local project agent powered by a model with a Chat Completions-compatible
 API. Version 0.7.0 uses an event-driven kernel and trusted, pluggable Python modules.
 See the [release notes](docs/release-0.7.0.md) and the limitations below.
