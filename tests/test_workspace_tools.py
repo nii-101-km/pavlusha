@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from pavlusha_agent import workspace_tools as tools
+from pavlusha_runtime import workspace_tools as tools
 from pavlusha_agent.sandbox import build_bwrap_command
 
 

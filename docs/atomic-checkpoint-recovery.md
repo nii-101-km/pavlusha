@@ -1,5 +1,8 @@
 # Atomic checkpoint handoff and strict cold restart
 
+> Historical documentation for Pavlusha v0.6.0. Commands, paths and behavior here may not apply to v0.7.0; see [README](../README.md) and [release notes](release-0.7.0.md).
+
+
 ## Previous behavior and problem
 
 Before changes, inspected StateStore serialization/atomic writes, Project State validators,

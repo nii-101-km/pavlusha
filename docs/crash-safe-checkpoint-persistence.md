@@ -1,5 +1,8 @@
 # Crash-safe checkpoint persistence audit — 2026-10-13
 
+> Historical documentation for Pavlusha v0.6.0. Commands, paths and behavior here may not apply to v0.7.0; see [README](../README.md) and [release notes](release-0.7.0.md).
+
+
 The existing publisher already serialized Project State, handoff and recovery metadata in
 one complete `state.json` image. It validated the checkpoint before publication, flushed and
 fsynced a same-directory temporary file, atomically replaced the primary with `os.replace`,

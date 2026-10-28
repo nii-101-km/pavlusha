@@ -10,8 +10,7 @@ from unittest.mock import patch
 
 from pavlusha_agent.cli import build_parser
 from pavlusha_agent.core import ProviderTurn, ShellResult
-from pavlusha_agent.project_map import ProjectMap, ProjectSymbol, PythonTreeSitterIndexer
-from pavlusha_agent.runtime import run_agent
+from pavlusha_modules.project_map.index import ProjectMap, ProjectSymbol, PythonTreeSitterIndexer
 
 
 class CountingIndexer:
@@ -138,81 +137,3 @@ class TreeSitterIntegrationTests(unittest.TestCase):
         self.assertEqual(by_name["Box.open"].signature, "def open(self, x: int) -> str")
         self.assertTrue(by_name["fetch"].signature.startswith("async def fetch"))
         self.assertEqual((by_name["Box.open"].start_line, by_name["Box.open"].end_line), (2, 5))
-
-
-class RuntimeProjectMapTests(unittest.TestCase):
-    def _run(self, tmp, FakeMap, actions):
-        seen_messages = []
-        pending = iter(actions)
-
-        def completion(self, messages, on_delta=None, **kwargs):
-            seen_messages.append(messages)
-            return ProviderTurn(content=json.dumps(next(pending)), reasoning_content="",
-                                finish_reason="stop", prompt_tokens=100, completion_tokens=10)
-
-        def shell(workdir, command, **kwargs):
-            return ShellResult(command=command, network=False, exit_code=0, timed_out=False,
-                               duration=0.01, stdout="ok", stderr="")
-
-        with patch("pavlusha_agent.runtime.ProjectMap", FakeMap), \
-             patch("pavlusha_agent.runtime.shutil.which", return_value="/test/bwrap"), \
-             patch("pavlusha_agent.runtime.ChatProvider.worker_completion", completion), \
-             patch("pavlusha_agent.runtime.run_shell", side_effect=shell):
-            args = build_parser().parse_args(['--no-interactive', '--no-live', '--no-network', '--project-map', 'off',
-                "--workdir", str(Path(tmp) / "work"), "--state-dir", str(Path(tmp) / "state"),
-                "--worker-context-budget", "40000", "--project-map", "on",
-                "--project-review-every", "0",
-                "--max-steps", str(len(actions)), "task",
-            ])
-            self.assertEqual(run_agent(args), 0)
-        return seen_messages
-
-    def test_project_map_is_checkpoint_snapshot_outside_working_context(self):
-        class FakeMap:
-            def __init__(self, root, cache_path, *, reset=False, indexer=None): self.refreshes = 0
-            def refresh(self):
-                self.refreshes += 1
-                return SimpleNamespace(files=1, parsed=1, reused=0, removed=0, map_changed=True)
-            def message(self):
-                return {"role": "user", "content": "PROJECT MAP\npkg/a.py\n  L1-2 function a: def a()"}
-
-        actions = [
-            {"action": "project_init", "design": [], "work": [{"objective": "verify", "status": "ACTIVE", "deliverables": []}, {"objective": "finish verification", "status": "PLANNED", "deliverables": []}]},
-            {"action": "shell", "command": "echo ok"},
-            {"action": "project_update", "changes": [{"op": "update_work", "id": "W001", "status": "DONE",
-                "evidence": ["SHELL RESULT: echo ok -> exit 0"]},
-                {"op": "update_work", "id": "W002", "status": "DONE",
-                "evidence": ["SHELL RESULT: echo ok -> exit 0"]}]},
-            {"action": "finish", "summary": "done"},
-        ]
-        with tempfile.TemporaryDirectory() as tmp:
-            seen = self._run(tmp, FakeMap, actions)
-        self.assertEqual(len(seen), 4)
-        self.assertTrue(all(sum(m["content"].startswith("PROJECT MAP") for m in request) == 1 for request in seen))
-        self.assertIn("checkpoint navigation snapshot", seen[0][0]["content"])
-
-    def test_map_stays_frozen_after_shell_and_local_state_update(self):
-        class FakeMap:
-            def __init__(self, root, cache_path, *, reset=False, indexer=None): self.version = 0
-            def refresh(self):
-                self.version += 1
-                return SimpleNamespace(files=1, parsed=1, reused=0, removed=0, map_changed=True)
-            def message(self): return {"role": "user", "content": f"PROJECT MAP VERSION {self.version}"}
-
-        actions = [
-            {"action": "project_init", "design": [], "work": [{"objective": "change", "status": "ACTIVE", "deliverables": []}, {"objective": "verify change", "status": "PLANNED", "deliverables": []}]},
-            {"action": "shell", "command": "printf changed > a.py"},
-            {"action": "project_update", "changes": [{"op": "update_work", "id": "W001", "status": "DONE",
-                "evidence": ["SHELL RESULT: printf changed > a.py -> exit 0"]},
-                {"op": "update_work", "id": "W002", "status": "DONE",
-                "evidence": ["SHELL RESULT: printf changed > a.py -> exit 0"]}]},
-            {"action": "finish", "summary": "done"},
-        ]
-        with tempfile.TemporaryDirectory() as tmp:
-            seen = self._run(tmp, FakeMap, actions)
-        for request in seen:
-            self.assertEqual(request[2]["content"], "PROJECT MAP VERSION 1")
-
-
-if __name__ == "__main__":
-    unittest.main()

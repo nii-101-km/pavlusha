@@ -1,5 +1,8 @@
 # Default GUI availability verification
 
+> Historical documentation for Pavlusha v0.6.0. Commands, paths and behavior here may not apply to v0.7.0; see [README](../README.md) and [release notes](release-0.7.0.md).
+
+
 GUI availability changed from opt-in to default-on. `--gui` remains compatible;
 `--no-gui` disables it in both interactive and non-interactive launches.
 The runtime checks existing GUI prerequisites before advertising actions. A

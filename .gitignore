@@ -1,5 +1,6 @@
 # Python environments and caches
 .venv/
+.venv.*/
 venv/
 __pycache__/
 *.py[cod]
@@ -12,6 +13,8 @@ __pycache__/
 
 # Default Worker/controller data and local benchmark executions
 /agent-work/
+/sessions/
+/session/
 *.pavlusha-state/
 /bench-runs/
 

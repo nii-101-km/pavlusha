@@ -1,5 +1,8 @@
 # XLSX custom function pack
 
+> Historical documentation for Pavlusha v0.6.0. Commands, paths and behavior here may not apply to v0.7.0; see [README](../README.md) and [release notes](release-0.7.0.md).
+
+
 `tools/xlsx_functions.py` exports four trusted synchronous functions through the
 existing repeatable `--functions`. Worker chooses ranges, interprets data, performs
 business analysis, selects edits and evaluates images. The pack supplies mechanical

@@ -1,5 +1,8 @@
 # Interactive chat and safe intervention (v0.3)
 
+> Historical documentation for Pavlusha v0.6.0. Commands, paths and behavior here may not apply to v0.7.0; see [README](../README.md) and [release notes](release-0.7.0.md).
+
+
 Enabled by default with `python agent.py --workdir ./agent-work "Your task"`.
 `--interactive` remains compatible; `--no-interactive` disables chat for batch/pipes.
 The existing model, network, GUI, Expert, GPU shell, Worker release and limit options apply.
@@ -207,8 +210,7 @@ human feedback, second acceptance request at 21 and terminal FINISH at 23; manua
 cancellation at step 11 and resumed FINISH at 15; integrated GUI start/character switching,
 cancellation at step 10, then a fresh acceptance request at 13. LM Studio logs recorded actual
 cancel-task/slot-release events. The integrated run did not naturally enter an action attractor;
-healthy GUI turns were not deleted. Audit/report artifacts are under
-`/home/leonid/pavlusha-dev/scratch/generation-control-20261009/`.
+healthy GUI turns were not deleted. The historical audit artifacts are not included in this repository.
 
 The exact operation-loop guard is covered by `tests/test_operation_loop.py`: cycles of length
 1–3, canonical JSON ordering, changed arguments/results, excluded outcomes, bounded memory,

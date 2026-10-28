@@ -1,5 +1,7 @@
 # Project State v0 — recovery checkpoint
 
+> Historical v0.6.0 design document; for the current module see [Project State](docs/project-state-module.md).
+
 Project State is the single durable semantic recovery document used by the active Worker runtime.
 It is **not** a transcript, a reasoning summary, a file inventory, or a second source of truth.
 

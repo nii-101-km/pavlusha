@@ -1,2 +1,2 @@
--r requirements.txt
-jsonschema>=4.18,<5
+-r requirements-modules.txt
+python-docx>=1.2

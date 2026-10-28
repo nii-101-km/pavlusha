@@ -8,8 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-class AgentError(RuntimeError):
-    pass
+from pavlusha_runtime.errors import AgentError, ProcessCleanupError
 
 
 @dataclass
@@ -53,12 +52,7 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def _trim(text: str, limit: int) -> str:
-    if len(text) <= limit:
-        return text
-    keep = max(1, limit // 2)
-    omitted = len(text) - 2 * keep
-    return text[:keep] + f"\n... <{omitted} chars omitted> ...\n" + text[-keep:]
+from pavlusha_runtime.text import _trim
 
 
 def _extract_json_object(text: str) -> dict[str, Any]:

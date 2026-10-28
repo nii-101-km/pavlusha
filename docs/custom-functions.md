@@ -1,5 +1,8 @@
 # Custom call-functions
 
+> Historical documentation for Pavlusha v0.6.0. Commands, paths and behavior here may not apply to v0.7.0; see [README](../README.md) and [release notes](release-0.7.0.md).
+
+
 `--functions /absolute/path/my_functions.py` enables a trusted local Python
 module for a run. The option is repeatable: independently loaded modules export
 their functions into one registry, in launch order. Exported names must be

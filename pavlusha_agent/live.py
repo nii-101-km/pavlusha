@@ -70,7 +70,7 @@ class LiveConsoleRenderer:
         return time.strftime("%H:%M:%S")
 
     def start(self, *, model: str, task: str, max_steps: int,
-              context: int | None = None, expert_status: str = "off") -> None:
+              context: int | None = None) -> None:
         title = "P.A.V.L.U.S.H.A.☝ 😐"
         description = (
             "Persistent Autonomous Verification & Local Utility\n"
@@ -89,10 +89,9 @@ class LiveConsoleRenderer:
                 ("version", __version__),
                 ("model", model),
                 ("context", context_text),
-                ("expert", expert_status),
             ):
                 fields.append(f"{label:<9}", style="dim" if self.color else None)
-                fields.append(value + ("\n" if label != "expert" else ""))
+                fields.append(value + "\n")
 
             content = Group(
                 Text(""),
@@ -117,7 +116,7 @@ class LiveConsoleRenderer:
             self._line(title)
             self._line(description)
             self._line(
-                f"version {__version__} · model {model} · context {context_text} · expert {expert_status}"
+                f"version {__version__} · model {model} · context {context_text}"
             )
 
         self._line(self._paint("metadata", f"PAVLUSHA LIVE · max steps {max_steps}"))
@@ -201,8 +200,8 @@ class LiveConsoleRenderer:
     def action(self, kind: str, data: dict[str, Any]) -> None:
         self._close_streams()
         if kind == "shell":
-            net = "net" if data.get("network") else "offline"
-            self._line(f"{self._stamp()}  {self._paint('shell', 'SHELL')} [{net}]")
+            network = (" [net]" if data.get("network") else " [offline]") if 'network' in data else ''
+            self._line(f"{self._stamp()}  {self._paint('shell', 'SHELL')}{network}")
             self._line("  $ " + self._paint("command", str(data.get("command", ""))))
         elif kind == "project_init":
             self._line(f"{self._stamp()}  {self._paint('state', 'PROJECT STATE')}  initial plan")
@@ -226,52 +225,30 @@ class LiveConsoleRenderer:
                             self._line("    " + self._paint("metadata", "EVIDENCE") + "  " + item.strip())
         elif kind == "project_review_complete":
             self._line(f"{self._stamp()}  {self._paint('state', 'PROJECT STATE')}  review complete")
-        elif kind in {"gui_start", "view_gui", "click", "double_click", "right_click", "drag", "type_text", "gui_close", "press_key", "hold_key"}:
-            self._line(f"{self._stamp()}  {self._paint('external', 'GUI')}  {kind}")
-            coords = " ".join(f"{name}={data[name]}" for name in ("x", "y", "x1", "y1", "x2", "y2") if name in data)
-            if coords:
-                self._line("  " + coords)
-            if kind in {'press_key', 'hold_key'}:
-                self._line('  ' + '+'.join([*data.get('modifiers', []), data['key']]) +
-                           (f" for {data['duration']:g}s" if kind == 'hold_key' else ''))
-            if kind == "gui_start":
-                self._line("  $ " + self._paint("command", str(data.get("command", ""))))
         elif kind == "call_function":
             self._line(f"{self._stamp()}  {self._paint('external', 'FUNCTION')}  {data.get('name')}")
-        elif kind == "ask_expert":
-            self._line(f"{self._stamp()}  {self._paint('external', 'EXPERT')}  requested")
         elif kind == "project_review_skip":
             self._line(f"{self._stamp()}  {self._paint('state', 'PROJECT STATE')}  {self._paint('warning', 'review skipped')}")
         elif kind == "finish":
             self._line(f"{self._stamp()}  {self._paint('success', 'FINISH')}  requested")
-
-    def gui_result(self, result: dict[str, Any]) -> None:
-        self._close_streams()
-        state = str(result.get("state", ""))
-        error = str(result.get("error", ""))
-        if error:
-            self._line(self._paint("error", f"  GUI ERROR · {error}"))
         else:
-            suffix = f" · {state}" if state else ""
-            self._line(self._paint("metadata", "  └─ GUI observation" + suffix))
+            self._line(f"{self._stamp()}  {self._paint('external', 'FUNCTION')}  {kind}")
+            arguments = {key: value for key, value in data.items() if key != 'action'}
+            if arguments:
+                self._literal(json.dumps(arguments, ensure_ascii=False, indent=2))
 
-    def expert_event(self, event: dict[str, Any]) -> None:
-        if event.get("event") == "started":
+    def turn_result(self, turn: int, action: dict[str, Any] | None, result: dict[str, Any]) -> None:
+        """Present a completed action without changing or interpreting its effects."""
+        kind = (action or {}).get('action', '')
+        if result.get('error'):
+            self.invalid(str(result['error']) + (': ' + str(result['detail']) if result.get('detail') else ''))
+        elif 'exit_code' in result:
+            self.operation(f'turn {turn}', result)
+        elif kind in ('project_init', 'project_update', 'project_review_complete', 'finish'):
             self._close_streams()
-            self._line(f"{self._stamp()}  {self._paint('external', 'EXPERT')}  request started")
-            self._line(self._paint("metadata", f"  model {event.get('model')} · call {event.get('calls')}/{event.get('max_calls')}"))
-
-    def expert_result(self, result: dict[str, Any]) -> None:
-        self._close_streams()
-        error = result.get("error")
-        self._line(f"{self._stamp()}  {self._paint('external', 'EXPERT')}  " +
-                   self._paint("error" if error else "success", f"failed · {error}" if error else "returned"))
-        if result.get("http_status") is not None:
-            self._line(self._paint("metadata", f"  HTTP {result['http_status']}"))
-        if result.get("duration_seconds") is not None:
-            self._line(self._paint("metadata", f"  {result['duration_seconds']}s · prompt {result.get('prompt_tokens', '?')} · completion {result.get('completion_tokens', '?')}"))
-        if isinstance(result.get("answer"), str):
-            self._markdown(result["answer"])
+            self._line('  ' + self._paint('success', str(result.get('status', 'completed'))))
+        else:
+            self.function_result(f'turn {turn}', result)
 
     def function_result(self, op_id: str, result: dict[str, Any]) -> None:
         self._close_streams()

@@ -1,5 +1,8 @@
 # Private GUI tools
 
+> Historical documentation for Pavlusha v0.6.0. Commands, paths and behavior here may not apply to v0.7.0; see [README](../README.md) and [release notes](release-0.7.0.md).
+
+
 Publication note: local run logs, state snapshots, screenshots and result directories
 referenced in this historical report are excluded from the source distribution.
 Required regression fixtures remain in `tests/fixtures/`; OCR application smoke tools

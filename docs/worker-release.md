@@ -1,5 +1,8 @@
 # Worker release for bounded shell execution
 
+> Historical documentation for Pavlusha v0.6.0. Commands, paths and behavior here may not apply to v0.7.0; see [README](../README.md) and [release notes](release-0.7.0.md).
+
+
 An ordinary shell action may include an optional boolean `release_worker`:
 
 ```json

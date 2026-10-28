@@ -1,0 +1,7 @@
+-r requirements.txt
+rich>=14.1,<15
+Pillow>=9
+python-xlib>=0.33
+websocket-client>=1.8,<2
+lxml>=5
+openpyxl>=3.1

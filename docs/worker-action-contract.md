@@ -1,5 +1,8 @@
 # Worker action generation and validation
 
+> Historical documentation for Pavlusha v0.6.0. Commands, paths and behavior here may not apply to v0.7.0; see [README](../README.md) and [release notes](release-0.7.0.md).
+
+
 Worker responses keep the existing single JSON action protocol. Every runtime
 Worker inference request sends LM Studio's OpenAI-compatible
 `response_format.type = "json_schema"`, with `json_schema.name = "worker_action"`,

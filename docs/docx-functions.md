@@ -1,5 +1,8 @@
 # DOCX custom function pack
 
+> Historical documentation for Pavlusha v0.6.0. Commands, paths and behavior here may not apply to v0.7.0; see [README](../README.md) and [release notes](release-0.7.0.md).
+
+
 `tools/docx_functions.py` is a trusted user module loaded through the existing
 `--functions` mechanism. It exports exactly `docx_inspect`, `docx_read`,
 `docx_edit`, `docx_render`. It uses the existing Pavlusha CLI parser to read

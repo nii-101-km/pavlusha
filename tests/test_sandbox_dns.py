@@ -13,7 +13,7 @@ from pavlusha_agent.sandbox import build_bwrap_command, run_shell
 
 class ResolverConstructionTests(unittest.TestCase):
     def test_only_resolved_file_is_mounted_readonly_for_shared_network(self):
-        with patch('pavlusha_agent.sandbox.Path') as path:
+        with patch('pavlusha_runtime.sandbox.Path') as path:
             path.return_value.resolve.return_value=Path('/run/systemd/resolve/stub-resolv.conf')
             with patch('pathlib.Path.is_file',return_value=True):
                 args=build_bwrap_command(Path('/tmp/work'),'true',network=True)
@@ -27,7 +27,7 @@ class ResolverConstructionTests(unittest.TestCase):
             path.return_value.resolve.assert_called_once_with(strict=True)
 
     def test_network_off_does_not_inspect_or_mount_resolver_target(self):
-        with patch('pavlusha_agent.sandbox.Path') as path:
+        with patch('pavlusha_runtime.sandbox.Path') as path:
             args=build_bwrap_command(Path('/tmp/work'),'true',network=False)
             path.assert_not_called()
         self.assertNotIn('--share-net',args)
@@ -36,13 +36,13 @@ class ResolverConstructionTests(unittest.TestCase):
 
     def test_regular_resolver_needs_no_extra_mount(self):
         resolver=Path('/etc/resolv.conf')
-        with patch('pavlusha_agent.sandbox.Path',return_value=resolver), \
+        with patch('pavlusha_runtime.sandbox.Path',return_value=resolver), \
              patch('pathlib.Path.resolve',return_value=resolver), patch('pathlib.Path.is_file',return_value=True):
             args=build_bwrap_command(Path('/tmp/work'),'true',network=True)
         self.assertNotIn('/etc/resolv.conf',args) # Already included by read-only /etc.
 
     def test_missing_target_fails_explicitly_and_is_re_resolved_per_command(self):
-        with patch('pavlusha_agent.sandbox.Path') as path:
+        with patch('pavlusha_runtime.sandbox.Path') as path:
             path.return_value.resolve.side_effect=FileNotFoundError('resolver disappeared')
             with self.assertRaises(FileNotFoundError):
                 build_bwrap_command(Path('/tmp/work'),'true',network=True)

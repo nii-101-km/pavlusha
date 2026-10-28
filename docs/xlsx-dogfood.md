@@ -1,5 +1,8 @@
 # XLSX pack dogfood
 
+> Historical documentation for Pavlusha v0.6.0. Commands, paths and behavior here may not apply to v0.7.0; see [README](../README.md) and [release notes](release-0.7.0.md).
+
+
 ## Design and task
 
 The pack follows DOCX's trusted synchronous, revision-based, bounded document

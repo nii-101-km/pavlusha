@@ -1,5 +1,8 @@
 # Pavlusha 0.6.0
 
+> Historical documentation for Pavlusha v0.6.0. Commands, paths and behavior here may not apply to v0.7.0; see [README](../README.md) and [release notes](release-0.7.0.md).
+
+
 ## Changes
 
 - Periodic checkpoints atomically commit current Project State and a nonempty operational handoff; History and the frozen prompt prefix remain intact.

@@ -1,5 +1,8 @@
 # Lexical recovery exhaustion: controlled CLI dogfood
 
+> Historical documentation for Pavlusha v0.6.0. Commands, paths and behavior here may not apply to v0.7.0; see [README](../README.md) and [release notes](release-0.7.0.md).
+
+
 Local artifact paths below are generalized as `/path/to/dogfood`; the artifacts are not shipped in this repository.
 
 On 2026-10-06 the public `agent.py` path was exercised with a local HTTP SSE

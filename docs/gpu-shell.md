@@ -1,5 +1,8 @@
 # Opt-in GPU access for shell
 
+> Historical documentation for Pavlusha v0.6.0. Commands, paths and behavior here may not apply to v0.7.0; see [README](../README.md) and [release notes](release-0.7.0.md).
+
+
 An ordinary shell action may include `"gpu":true`:
 
 ```json
