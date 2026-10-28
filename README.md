@@ -1,69 +1,70 @@
 # P.A.V.L.U.S.H.A.
 
-Pavlusha — локальный агент для работы с проектом через модель с API,
-совместимым с Chat Completions. Версия 0.7.0 подготовлена на событийном ядре
-и подключаемых доверенных Python-модулях. Это подготовительная версия: см.
-[заметки о выпуске](docs/release-0.7.0.md) и ограничения ниже.
+Pavlusha is a local project agent powered by a model with a Chat Completions-compatible
+API. Version 0.7.0 uses an event-driven kernel and trusted, pluggable Python modules.
+See the [release notes](docs/release-0.7.0.md) and the limitations below.
 
-## Требования и установка
+## Requirements and installation
 
-Linux, Python 3.12, `bubblewrap` и разрешённые пользовательские пространства имён;
-для полноценной работы нужен доступный совместимый сервер модели. Для GUI также
-нужны Xvfb и X11; для рендеринга DOCX/XLSX — LibreOffice, Poppler и шрифты.
+Use Linux, Python 3.12, `bubblewrap`, and enabled user namespaces. A compatible model
+server must be available for the agent to run. GUI tools also require Xvfb and X11;
+DOCX/XLSX rendering requires LibreOffice, Poppler, and fonts.
 
 ```sh
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements-modules.txt
-# Для тестов дополнительно:
+# For tests, also install:
 pip install -r requirements-test.txt
 python -m unittest discover -s tests
 ```
 
-Проверить версию в установленном окружении: `python agent.py --version` или
-`python project_state_agent.py --version`. Оба запуска используют версию из
-`pavlusha_agent.__version__`. Метаданных устанавливаемого Python-пакета пока нет;
-команды запускаются из копии проекта.
+Check the version in the environment with `python agent.py --version` or
+`python project_state_agent.py --version`. Both entry points use
+`pavlusha_agent.__version__`. Installable Python package metadata is not yet provided;
+run the commands from the project checkout.
 
-## Запуск
+## Running Pavlusha
 
-Подготовьте отдельные, не вложенные друг в друга каталоги работы и технической
-сессии. Укажите адрес и имя уже запущенной модели:
+Prepare separate, non-nested directories for the work files and the technical session.
+Specify the address and model name of a running model server:
 
 ```sh
 python project_state_agent.py --workdir /absolute/work --session-dir /absolute/session \
   --backend llama-cpp --base-url http://127.0.0.1:8897/v1 --model MODEL \
-  --live 'Опишите задачу'
+  --live 'Describe the task'
 ```
 
-`project_state_agent.py` по умолчанию загружает 13 модулей из
-`examples/state-map.modules.json`; другой манифест выбирается через `--modules`.
-Это доверенный Python-код, а не песочница для модулей. `agent.py` запускает
-минимальную сборку без этого манифеста. Оба входа поддерживают `--help`.
-Для управляемого llama-server используйте `--llama-server-config` и адаптируйте
-примеры в `examples/` под свою систему. Модель и сервер не входят в проект.
+By default, `project_state_agent.py` loads 13 modules from
+`examples/state-map.modules.json`; use `--modules` to select another manifest.
+Modules are trusted Python code and are not sandboxed. `agent.py` runs a minimal
+composition without this manifest. Both entry points support `--help`.
+To use a managed llama-server, pass `--llama-server-config` and adapt the examples in
+`examples/` to your system. The model and server are not included in the project.
 
-Модули предоставляют Shell, Project State и Map, изображения, фоновые процессы,
-GUI, Browser, Expert, DOCX/XLSX, shell с выгрузкой модели, запись кода из
-рассуждений, детекторы петель и ввод пользователя. Browser и Expert по умолчанию
-пассивны и требуют настройки; подробности в [описании модулей](docs/loaded-capabilities.md)
-и [загрузчика](docs/module-loader.md). Сеть инструментов ограничивается отдельно.
+The modules provide Shell, Project State and Map, images, background processes,
+GUI, Browser, Expert, DOCX/XLSX, shell execution with model release, writing code
+from reasoning, loop detection, and user input. Browser and Expert are inactive
+by default and require configuration; see the [module capabilities](docs/loaded-capabilities.md)
+and [module loader](docs/module-loader.md) documentation. Network access is controlled
+separately for each applicable tool.
 
-В интерактивном терминале Ctrl+Z запрашивает паузу после тюрна, Ctrl+\ — срочную
-паузу; `/multiline` и `/send` позволяют вводить несколько строк. Пауза может быть
-возобновлена сообщением. Потоковый канал сообщений модели пользователю и ручное
-редактирование истории не перенесены.
+In an interactive terminal, Ctrl+Z requests a pause after the current turn, while
+Ctrl+\ requests an urgent pause. Use `/multiline` and `/send` to enter several lines.
+A paused session can resume with a user message. Streaming model messages to the user
+and manual history editing have not been carried over.
 
-## Контракт и ограничения
+## Interface and limitations
 
-[Контракт v2](docs/event-interface.md) описывает события, вклады, управление,
-контекст вызова, наблюдения, исключительные режимы и выгрузку модели. Модули
-хранят своё состояние отдельно от технической сессии; общей аварийной транзакции
-между ними нет. Неизвестный результат прерванного действия блокирует автоматический
-повтор. Для возобновления используйте ту же конфигурацию модулей и сохраняйте
-рабочий каталог и каталог сессии вместе.
+The [v2 interface](docs/event-interface.md) describes events, contributions, controls,
+invocation context, observations, exclusive modes, and model release. Modules store
+their state separately from the technical session; there is no shared crash-safe
+transaction between them. An interrupted action with an unknown result blocks
+automatic replay. To resume, use the same module configuration and retain both the
+work directory and the session directory.
 
-`shell_released` не гарантирует обязательный review Project State и сброс контекста
-после команды, которые были в прежнем пути. Пользовательские function-паки и мост
-истории не перенесены; старая архитектура параллельно не поддерживается. Совместимость
-старых сессий и конфигураций не заявляется. См. [заметки о выпуске](docs/release-0.7.0.md).
+`shell_released` does not enforce the Project State review and context reset that
+were mandatory in the previous implementation. Custom function packs and the history
+bridge have not been carried over, and the old architecture is not maintained in
+parallel. Compatibility with old sessions and configurations is not guaranteed.
+See the [release notes](docs/release-0.7.0.md).
