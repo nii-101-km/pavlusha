@@ -39,6 +39,20 @@ python project_state_agent.py --config examples/liquid.cpu.config.json \
 ```
 
 Examples cover Liquid, Qwen, Ornith and Perplexity with a local child agent.
+The local models exercised in our experiments and their example module sets are:
+
+| Model | Example configuration | Modules |
+| --- | --- | --- |
+| Qwen3.8-27B | [qwen.native.config.json](examples/qwen.native.config.json) | Shell, Project State, Project Map, Images, Processes, GUI, Browser, Expert, Office, GPU Shell, Reasoning Code, Loop Detection, Interactive |
+| Ornith-1.5-35B-A3B | [ornith.config.json](examples/ornith.config.json) | Shell, Project State, Loop Detection |
+| LFM3-1.7B (Liquid) | [liquid.cpu.config.json](examples/liquid.cpu.config.json) | Shell, Finish, Loop Detection, Token Window |
+
+These examples reflect the configurations used for local experiments; they do
+not establish compatibility with other models or validate every module in every
+run. Browser and Expert require separate configuration. The Perplexity-backed
+parent with a local Qwen child was also exercised separately; it requires an API
+key and a running local server.
+
 Modules are trusted Python code and are not sandboxed. `agent.py` runs a minimal
 composition with its own CLI. Both entry points support `--help`.
 For a managed llama-server, set `llama_server` in the assembly configuration
