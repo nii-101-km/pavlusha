@@ -37,7 +37,7 @@ class ManagedLlamaServer:
         self.timeout = timeout
         self.api_key = api_key
         try:
-            config = json.loads(Path(config_path).read_text())
+            config = dict(config_path) if isinstance(config_path, dict) else json.loads(Path(config_path).read_text())
             argv = config["argv"]
             if (set(config) - {"argv", "preserve_kv", "kv_storage"} or type(config.get("preserve_kv", False)) is not bool
                     or not isinstance(argv, list) or not argv
@@ -106,6 +106,14 @@ class ManagedLlamaServer:
                 raise AgentError('RAM KV storage requires /dev/shm on tmpfs; no disk fallback')
         return tempfile.TemporaryDirectory(prefix='pavlusha-kv-', dir=directory)
 
+    def prepare_kv_directory(self):
+        """Prepare the server's snapshot directory before modules are constructed."""
+        if not self.preserve_kv:
+            return None
+        if self._kv_directory is None:
+            self._kv_directory = self._create_kv_directory()
+        return self._kv_directory.name
+
     def _save_kv(self):
         """Snapshot the sole idle slot; never mix clients or interrupt generation."""
         try:
@@ -163,9 +171,7 @@ class ManagedLlamaServer:
         try:
             argv = self.argv
             if self.preserve_kv:
-                if self._kv_directory is None:
-                    self._kv_directory = self._create_kv_directory()
-                argv += ("--slots", "--slot-save-path", self._kv_directory.name)
+                argv += ("--slots", "--slot-save-path", self.prepare_kv_directory())
             with self.log_path.open("ab") as output:
                 self.process = subprocess.Popen(argv, stdout=output, stderr=subprocess.STDOUT,
                                                 stdin=subprocess.DEVNULL, start_new_session=True)

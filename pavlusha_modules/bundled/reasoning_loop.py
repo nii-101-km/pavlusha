@@ -35,7 +35,10 @@ class ReasoningLoopDetector:
     Only the last window's words and older shingle sets are retained, never raw reasoning.
     After first confirmation the observer stops work for this generation.
     """
-    def __init__(self) -> None:
+    def __init__(self, *, window_words=WINDOW_WORDS, stride_words=STRIDE_WORDS, min_lag_words=MIN_LAG_WORDS) -> None:
+        if any(type(v) is not int for v in (window_words, stride_words, min_lag_words)) or window_words < SHINGLE_WORDS or stride_words < 1 or min_lag_words < 1:
+            raise ValueError("reasoning window, stride, and lag must be positive integers; window must be at least 4")
+        self.window_words, self.stride_words, self.min_lag_words = window_words, stride_words, min_lag_words
         self._fence_length = 0
         self._closing_fence = False
         self._in_code = False
@@ -43,7 +46,7 @@ class ReasoningLoopDetector:
         self._line_prefix: str | None = ""
         self.word_count = 0
         self._partial: list[str] = []
-        self._words: deque[str] = deque(maxlen=WINDOW_WORDS)
+        self._words: deque[str] = deque(maxlen=self.window_words)
         self._windows: list[tuple[int, set[tuple[str, ...]]]] = []
         self._consecutive = 0
         self.confirmation: LoopSignal | None = None
@@ -133,15 +136,15 @@ class ReasoningLoopDetector:
         self._words.append("".join(self._partial).lower())
         self._partial.clear()
         self.word_count += 1
-        if self.word_count < WINDOW_WORDS or (self.word_count - WINDOW_WORDS) % STRIDE_WORDS:
+        if self.word_count < self.window_words or (self.word_count - self.window_words) % self.stride_words:
             return None
-        start = self.word_count - WINDOW_WORDS
+        start = self.word_count - self.window_words
         words = list(self._words)
         shingles = {tuple(words[i:i + SHINGLE_WORDS])
-                    for i in range(WINDOW_WORDS - SHINGLE_WORDS + 1)}
+                    for i in range(self.window_words - SHINGLE_WORDS + 1)}
         best, matched = 0.0, None
         for old_start, old_shingles in self._windows:
-            if start - old_start < MIN_LAG_WORDS:
+            if start - old_start < self.min_lag_words:
                 break
             similarity = len(shingles & old_shingles) / len(shingles | old_shingles)
             if similarity > best:

@@ -18,8 +18,10 @@ def load_modules(path, *, context=None):
         manifest = json.loads(path.read_text(encoding='utf-8'))
     except (OSError, ValueError) as exc:
         raise AgentError(f'cannot read module manifest {path}: {exc}') from exc
-    if (type(manifest) is not dict or set(manifest) != {'modules'}
-            or type(manifest['modules']) is not list):
+    if (type(manifest) is not dict or 'modules' not in manifest
+            or set(manifest) - {'modules', 'runtime', 'module_base_dir'}
+            or type(manifest['modules']) is not list
+            or ('module_base_dir' in manifest and not isinstance(manifest['module_base_dir'], str))):
         raise AgentError('module manifest requires a modules array')
     entries = manifest['modules']
     for entry in entries:
@@ -38,7 +40,7 @@ def load_modules(path, *, context=None):
         try:
             factory = getattr(importlib.import_module(module_name), factory_name)
             module_context = copy.deepcopy(context or {})
-            module_context['config_dir'] = str(path.parent)
+            module_context['config_dir'] = str((path.parent / manifest.get('module_base_dir', '.')).resolve())
             extension = factory(settings=copy.deepcopy(entry.get('settings', {})),
                                 context=module_context)
         except Exception as exc:

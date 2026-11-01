@@ -8,7 +8,7 @@ def obj(properties, required=()):
             'additionalProperties': False}
 
 
-def declarations(invoke):
+def declarations(invoke, *, combined_review=False):
     text = {'type': 'string', 'minLength': 1}
     strings = {'type': 'array', 'items': text, 'uniqueItems': True}
     work = obj({'objective': text, 'status': {'enum': ['PLANNED', 'ACTIVE']},
@@ -35,6 +35,9 @@ def declarations(invoke):
         'project_review_complete': obj({'handoff': text, 'note': {'type': 'string'}}, ('handoff',)),
         'finish': obj({'summary': text}, ('summary',)),
     }
+    if combined_review:
+        shapes['project_review_complete']['properties']['changes'] = {
+            'type': 'array', 'items': {'anyOf': changes}, 'minItems': 1, 'maxItems': 32}
     descriptions = {'project_init': 'Initialize the durable project plan before ordinary work.',
                     'project_update': 'Atomically update durable work, decisions and evidence pointers.',
                     'project_review_complete': 'Commit Project State and a brief continuation handoff together.',

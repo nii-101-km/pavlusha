@@ -13,8 +13,8 @@ __pycache__/
 
 # Default Worker/controller data and local benchmark executions
 /agent-work/
-/sessions/
 /session/
+/sessions/
 *.pavlusha-state/
 /bench-runs/
 

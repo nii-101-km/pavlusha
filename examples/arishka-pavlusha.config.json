@@ -1,0 +1,34 @@
+{
+  "runtime": {
+    "backend": "perplexity-agent",
+    "base_url": "https://api.perplexity.ai/v1",
+    "model": "openai/gpt-6.1-terra",
+    "api_key_env": "PAVLUSHA_API_KEY",
+    "worker_context_budget": 16000,
+    "max_tokens": 2048,
+    "max_steps": 20,
+    "interactive": true,
+    "live": true
+  },
+  "modules": [
+    {
+      "factory": "pavlusha_modules.shell:create_extension"
+    },
+    {
+      "factory": "pavlusha_modules.finish:create_extension"
+    },
+    {
+      "factory": "pavlusha_modules.orchestration:create_extension",
+      "settings": {
+        "modules": "qwen.native.config.json",
+        "base_url": "http://127.0.0.1:8899/v1",
+        "model": "state-qwen",
+        "context_budget": 110000,
+        "max_steps": 20
+      }
+    },
+    {
+      "factory": "pavlusha_modules.interactive:create_extension"
+    }
+  ]
+}

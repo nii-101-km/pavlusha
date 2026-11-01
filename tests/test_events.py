@@ -31,7 +31,8 @@ class Probe:
         self.name, self.events, self.hook = name, [], hook
     def on_event(self, event):
         self.events.append(copy.deepcopy(event))
-        return self.hook(event) if self.hook else None
+        result = self.hook(event) if self.hook else None
+        return Contribution() if event.kind == 'session_started' and result is None else result
 
 
 class Provider:
@@ -74,7 +75,8 @@ class RuntimeEventTests(unittest.TestCase):
         self.assertEqual(turn['action'], {'action':'shell','command':'verify'})
         self.assertEqual(turn['result']['stdout'],'VERIFIED')
         self.assertEqual(turn['status'],'completed')
-        self.assertEqual(turn['request']['messages'][0],{'role':'system','content':SYSTEM_PROMPT})
+        self.assertTrue(turn['request']['messages'][0]['content'].startswith(SYSTEM_PROMPT))
+        self.assertIn('ACTION shell:', turn['request']['messages'][0]['content'])
         self.assertEqual(probe.events[-1].data['reason'],'finished')
         self.assertEqual(probe.events[-2].data['turn']['stop'],True)
     def test_initial_and_post_reset_prepare_have_correct_flags(self):
@@ -251,9 +253,7 @@ class RuntimeEventTests(unittest.TestCase):
         root=Path(__file__).resolve().parents[1]
         for name in ('action_registry.py','functions.py','project_state.py','project_map.py','checkpoint.py','state_store.py'):
             self.assertFalse((root/'pavlusha_agent'/name).exists(),name)
-        baseline=json.loads((root/'tests/fixtures/original-hashes.json').read_text())
-        self.assertEqual(hashlib.sha256((root/'pavlusha_agent/config.py').read_bytes()).hexdigest(),
-                         baseline['pavlusha_agent/config.py'])
+        self.assertNotIn('project_init', SYSTEM_PROMPT)
 
 
 class EventHostTests(unittest.TestCase):

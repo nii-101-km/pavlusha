@@ -277,12 +277,13 @@ class Runtime:
             # Turn IDs are still available to extensions and in the session journal.
             service = SERVICE + f'\nContext epoch: {state["context_epoch"]}.'
             if state['context_epoch']:
-                service += '\nCONTEXT RESET: previous history is archived; inspect current work files.'
-            messages = [{'role': 'system', 'content': SYSTEM_PROMPT},
+                service += '\nCONTEXT RESET: previous history is archived.'
+            system_prompt = '\n\n'.join((SYSTEM_PROMPT, *view.system_instructions))
+            messages = [{'role': 'system', 'content': system_prompt},
                         {'role': 'user', 'content': 'TASK:\n' + self.task},
                         {'role': 'user', 'content': service}, *copy.deepcopy(view.prefix)]
-            for record in state['history']:
-                messages.extend(copy.deepcopy(record['messages']))
+            for record in self.host.model_history(state['history']):
+                messages.extend(record['messages'])
             if state.get('pending_user_reply') is not None:
                 messages.append({'role': 'user', 'content': 'USER REPLY:\n' + state['pending_user_reply']})
             messages.extend(copy.deepcopy(view.messages))

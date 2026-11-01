@@ -10,7 +10,7 @@ from jsonschema import Draft202012Validator
 
 from .core import AgentError
 
-MODULE_API_VERSION = 2
+MODULE_API_VERSION = 3
 
 EventKind = Literal['session_started', 'prepare_turn', 'reasoning_fragment',
                     'turn_completed', 'before_reset', 'session_stopped', 'key_pressed', 'paused']
@@ -88,6 +88,7 @@ class Contribution:
     exclusive: bool = False
     reset_ready: bool = True
     observations: tuple[Observation, ...] = ()
+    system_instructions: str = ''
 
 
 @dataclass(frozen=True)
@@ -152,6 +153,7 @@ class TurnView:
     tools: tuple[Tool, ...]
     exclusive_owner: str | None
     tool_owners: dict[str, str] = field(default_factory=dict)
+    system_instructions: tuple[str, ...] = ()
 
     @staticmethod
     def schema_for(tool):
@@ -206,13 +208,14 @@ class EventHost:
             raise AgentError('event handler must return Contribution or None')
         if (type(value.prefix) is not dict or any(type(k) is not str or type(v) is not str
                 for k, v in value.prefix.items()) or type(value.message) is not str
-                or type(value.exclusive) is not bool or type(value.reset_ready) is not bool):
+                or type(value.exclusive) is not bool or type(value.reset_ready) is not bool
+                or type(value.system_instructions) is not str or type(value.tools) is not tuple):
             raise AgentError('invalid module contribution')
         validate_observations(value.observations)
         tools = []
         for tool in value.tools:
             if (not isinstance(tool, Tool) or not tool.name.isidentifier() or not callable(tool.invoke)
-                    or type(tool.description) is not str or tool.arguments.get('type') != 'object'
+                    or type(tool.description) is not str or not tool.description.strip() or type(tool.arguments) is not dict or tool.arguments.get('type') != 'object'
                     or tool.arguments.get('additionalProperties') is not False
                     or 'action' in tool.arguments.get('properties', {})):
                 raise AgentError('invalid function declaration')
@@ -224,7 +227,7 @@ class EventHost:
             Draft202012Validator.check_schema(tool.arguments)
             tools.append(Tool(tool.name, tool.description, copy.deepcopy(tool.arguments), tool.invoke, tool.execution))
         return Contribution(copy.deepcopy(value.prefix), value.message, tuple(tools),
-                            value.exclusive, value.reset_ready, copy.deepcopy(value.observations))
+                            value.exclusive, value.reset_ready, copy.deepcopy(value.observations), value.system_instructions)
 
     def emit(self, event):
         if event.kind == 'session_started':
@@ -238,6 +241,9 @@ class EventHost:
                 self.started.append(module)
             try:
                 result = module.on_event(copy.deepcopy(event))
+                if event.kind == 'session_started' and (result is None or
+                        (isinstance(result, EventReply) and result.contribution is None)):
+                    raise AgentError('module did not provide an initial contribution')
                 if isinstance(result, EventReply):
                     validate_controls(result.controls, interrupt_allowed=event.kind == 'reasoning_fragment')
                     frozen = self._freeze(result.contribution) if result.contribution is not None else None
@@ -245,9 +251,9 @@ class EventHost:
                     result = frozen
                 if result is not None:
                     self.contributions[module.name] = self._freeze(result)
-            except BaseException as exc:
+            except Exception as exc:
                 if event.kind == 'session_started':
-                    raise
+                    raise AgentError(f'extension {module.name} failed during {event.kind}: {exc}') from exc
                 errors.append(f'{module.name}: {type(exc).__name__}: {exc}')
         if errors:
             raise AgentError('extension event failed: ' + '; '.join(errors))
@@ -264,10 +270,14 @@ class EventHost:
         if len(owners) > 1:
             raise AgentError('exclusive mode conflict: ' + ', '.join(owners))
         owner = owners[0] if owners else None
-        prefix, messages, tools, observations = [], [], [], []
+        prefix, messages, tools, observations, system = [], [], [], [], []
         for name, contribution in self.contributions.items():
             for key, text in contribution.prefix.items():
-                prefix.append({'role': 'user', 'content': f'EXTENSION {name}/{key}:\n{text}'})
+                if key == 'instructions':
+                    if (owner is None or owner == name) and text.strip():
+                        system.append(f'MODULE {name}:\n{text.strip()}')
+                else:
+                    prefix.append({'role': 'user', 'content': f'EXTENSION {name}/{key}:\n{text}'})
             if contribution.message:
                 messages.append({'role': 'user', 'content': f'EXTENSION {name}:\n{contribution.message}'})
             active_observations = (*contribution.observations, *self.pending_observations[name])
@@ -276,9 +286,37 @@ class EventHost:
                 messages.append({'role': 'user', 'content': [
                     {'type': 'text', 'text': f'EXTENSION {name}/observation:'}, *observation.parts()]})
             if owner is None or owner == name:
+                if contribution.system_instructions.strip():
+                    system.append(f'MODULE {name}:\n{contribution.system_instructions.strip()}')
+                for tool in contribution.tools:
+                    system.append(f'ACTION {tool.name}: {tool.description.strip()}')
                 tools.extend(contribution.tools)
         validate_observations(tuple(observations))
-        return TurnView(tuple(prefix), tuple(messages), tuple(tools), owner, all_names)
+        return TurnView(tuple(prefix), tuple(messages), tuple(tools), owner, all_names, tuple(system))
+
+    def model_history(self, history):
+        """Remove selected complete turns only from the model's view."""
+        records = copy.deepcopy(history)
+        by_turn = {record['turn_id']: record for record in records}
+        removed = set()
+        for module in self.started:
+            get_turns = getattr(module, 'turns_to_remove', None)
+            if not callable(get_turns):
+                continue
+            try:
+                turns = get_turns()
+                if type(turns) is not tuple or any(type(turn) is not int or turn < 1 for turn in turns):
+                    raise AgentError('turns to remove must be a tuple of positive integers')
+                for turn in turns:
+                    if turn not in by_turn:
+                        continue
+                    if any(str(message.get('content', '')).startswith('USER REPLY:\n')
+                           for message in by_turn[turn]['messages']):
+                        continue
+                    removed.add(turn)
+            except Exception as exc:
+                raise AgentError(f'extension {module.name} failed while rendering history: {exc}') from exc
+        return [record for record in records if record['turn_id'] not in removed]
 
     def reset_ready(self):
         return all(c.reset_ready for c in self.contributions.values())

@@ -4,9 +4,9 @@
   <img src="assets/pavlusha.png" alt="P.A.V.L.U.S.H.A. mascot holding a jar of jam" width="280">
 </p>
 
-Pavlusha is a local project agent powered by a model with a Chat Completions-compatible
-API. Version 0.7.0 uses an event-driven kernel and trusted, pluggable Python modules.
-See the [release notes](docs/release-0.7.0.md) and the limitations below.
+Pavlusha is a project agent powered by a local or remote model API. Version 0.8.0
+uses an event-driven kernel and trusted, pluggable Python modules. See the
+[0.8.0 notes](docs/release-0.8.0.md) and the limitations below.
 
 ## Requirements and installation
 
@@ -17,7 +17,7 @@ DOCX/XLSX rendering requires LibreOffice, Poppler, and fonts.
 ```sh
 python3 -m venv .venv
 . .venv/bin/activate
-pip install -r requirements-modules.txt
+pip install -r requirements.txt
 # For tests, also install:
 pip install -r requirements-test.txt
 python -m unittest discover -s tests
@@ -31,20 +31,24 @@ run the commands from the project checkout.
 ## Running Pavlusha
 
 Prepare separate, non-nested directories for the work files and the technical session.
-Specify the address and model name of a running model server:
+Choose an assembly configuration with model, server and module settings:
 
 ```sh
-python project_state_agent.py --workdir /absolute/work --session-dir /absolute/session \
-  --backend llama-cpp --base-url http://127.0.0.1:8897/v1 --model MODEL \
-  --live 'Describe the task'
+python project_state_agent.py --config examples/liquid.cpu.config.json \
+  --workdir /absolute/work --session-dir /absolute/session -- 'Describe the task'
 ```
 
-By default, `project_state_agent.py` loads 13 modules from
-`examples/state-map.modules.json`; use `--modules` to select another manifest.
+Examples cover Liquid, Qwen, Ornith and Perplexity with a local child agent.
 Modules are trusted Python code and are not sandboxed. `agent.py` runs a minimal
-composition without this manifest. Both entry points support `--help`.
-To use a managed llama-server, pass `--llama-server-config` and adapt the examples in
-`examples/` to your system. The model and server are not included in the project.
+composition with its own CLI. Both entry points support `--help`.
+For a managed llama-server, set `llama_server` in the assembly configuration
+and adapt its paths and options to your system. The examples use placeholder
+paths; the model and server are not included in the project.
+
+The Perplexity API adapter is experimental and may contain bugs. API calls can
+incur charges, including during long runs; usage, cache hits, and costs are not
+currently displayed or limited automatically. Use it at your own risk and monitor
+your provider balance. See [adapter notes](docs/perplexity-agent-adapter.md).
 
 The modules provide Shell, Project State and Map, images, background processes,
 GUI, Browser, Expert, DOCX/XLSX, shell execution with model release, writing code
@@ -52,6 +56,12 @@ from reasoning, loop detection, and user input. Browser and Expert are inactive
 by default and require configuration; see the [module capabilities](docs/loaded-capabilities.md)
 and [module loader](docs/module-loader.md) documentation. Network access is controlled
 separately for each applicable tool.
+
+Experimental sequential delegation supports a Perplexity parent and a separately
+running local child, as in `examples/arishka-pavlusha.config.json`. Local-to-local
+delegation requires a managed llama-server with KV preservation and server control.
+Child agents use separate workspaces and visible terminals. See
+[orchestration](docs/orchestration.md) for setup, tested behavior and limits.
 
 In an interactive terminal, Ctrl+Z requests a pause after the current turn, while
 Ctrl+\ requests an urgent pause. Use `/multiline` and `/send` to enter several lines.
@@ -71,4 +81,7 @@ work directory and the session directory.
 were mandatory in the previous implementation. Custom function packs and the history
 bridge have not been carried over, and the old architecture is not maintained in
 parallel. Compatibility with old sessions and configurations is not guaranteed.
-See the [release notes](docs/release-0.7.0.md).
+See the [0.8.0 notes](docs/release-0.8.0.md).
+
+The local [KV and MTP notes](docs/kv-storage.md) describe model-specific cache
+settings and measurements. Earlier 0.7.0 results do not validate later changes.

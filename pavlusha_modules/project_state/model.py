@@ -174,8 +174,12 @@ def validate_project_action(action: dict[str, Any]) -> tuple[str, dict[str, Any]
         note = action.get("note", "")
         if note is not None and not isinstance(note, str):
             raise AgentError("project_review_complete.note must be a string")
-        return kind, {"note": str(note or "").strip(),
-                      "handoff": validate_handoff(action.get("handoff", ""))}
+        values = {"note": str(note or "").strip(),
+                  "handoff": validate_handoff(action.get("handoff", ""))}
+        if "changes" in action:
+            _, parsed = validate_project_action({"action": "project_update", "changes": action["changes"]})
+            values["changes"] = parsed["changes"]
+        return kind, values
 
     raise AgentError("not a project-state action")
 

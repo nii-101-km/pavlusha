@@ -18,7 +18,8 @@ class OperationLoopDetector:
     def clear(self):
         self.history.clear()
 
-    def feed(self, kind, action, result, *, step):
+    @staticmethod
+    def fingerprint(kind, action, result):
         error = result.get('error')
         error_code = error.get('code') if isinstance(error, dict) else error
         # Unexecuted requests or withheld outcomes cannot establish identical executed results.
@@ -26,14 +27,19 @@ class OperationLoopDetector:
             'network_not_granted', 'unknown_function', 'invalid_arguments',
             'invalid_result', 'output_limit_exceeded',
         }) or 'launch_error' in result or 'execution_error' in result:
-            self.clear()
             return None
         normalized = dict(result)
         if kind in ('shell', 'shell_released'):
             normalized.pop('duration_seconds', None)
         payload = json.dumps([kind, action, normalized], sort_keys=True,
                              ensure_ascii=False, separators=(',', ':'), allow_nan=False)
-        digest = hashlib.sha256(payload.encode('utf-8')).hexdigest()
+        return hashlib.sha256(payload.encode('utf-8')).hexdigest()
+
+    def feed(self, kind, action, result, *, step):
+        digest = self.fingerprint(kind, action, result)
+        if digest is None:
+            self.clear()
+            return None
         self.history.append((digest, step))
         entries = list(self.history)
         for length in (1, 2, 3):

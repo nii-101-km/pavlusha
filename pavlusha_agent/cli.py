@@ -2,15 +2,16 @@
 import argparse
 from contextlib import nullcontext
 import math
+import os
 from pathlib import Path
 import sys
 
-from . import __version__
 from .adapters import ChatProvider
 from .basic_host import BasicHost
 from .core import AgentError
 from .llama_server import ManagedLlamaServer
 from .runtime import Runtime
+from . import __version__
 
 
 def build_parser():
@@ -20,7 +21,8 @@ def build_parser():
     parser.add_argument('--workdir', required=True)
     parser.add_argument('--session-dir', required=True)
     parser.add_argument('--base-url', default='http://127.0.0.1:8877/v1')
-    parser.add_argument('--backend', choices=('llama-cpp', 'lm-studio', 'chat-completions'), default='llama-cpp')
+    parser.add_argument('--backend', choices=('llama-cpp', 'lm-studio', 'chat-completions', 'perplexity-agent'), default='llama-cpp')
+    parser.add_argument('--api-key-env', default='PAVLUSHA_API_KEY', help='Environment variable containing the model API key')
     parser.add_argument('--model', required=True)
     parser.add_argument('--llama-server-config')
     parser.add_argument('--api-timeout', type=float, default=300)
@@ -59,7 +61,7 @@ def main():
         owned = ManagedLlamaServer(args.llama_server_config, args.base_url,
             session_dir.with_suffix('.server.log'), args.api_timeout) if args.llama_server_config else nullcontext()
         with owned as server:
-            provider = ChatProvider(args.base_url, args.model, '', args.api_timeout, args.temperature,
+            provider = ChatProvider(args.base_url, args.model, os.environ.get(args.api_key_env, ''), args.api_timeout, args.temperature,
                                     args.max_tokens, llama_server=server, backend=args.backend)
             runtime = Runtime(provider, task=task, session_dir=session_dir,
                 extensions=[BasicHost(workdir, network=args.network, timeout=args.command_timeout,

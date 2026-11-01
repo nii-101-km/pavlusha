@@ -7,11 +7,21 @@ from pathlib import Path
 from pavlusha_agent.basic_host import BasicHost
 from pavlusha_agent.core import ShellResult
 from pavlusha_agent.live import LiveConsoleRenderer
+from pavlusha_agent import __version__
 from pavlusha_agent.runtime import Runtime
 from tests.test_events import Provider, reply
 
 
 class LiveConsoleTests(unittest.TestCase):
+    def test_start_banner_shows_current_release(self):
+        for plain in (False, True):
+            stream=io.StringIO(); renderer=LiveConsoleRenderer(stream=stream,color=False)
+            if plain:
+                renderer._console=None
+            renderer.start(model='example',task='example',max_steps=1)
+            self.assertEqual(__version__, '0.8.0')
+            self.assertIn(__version__,stream.getvalue())
+
     def test_streamed_reasoning_shell_and_result_are_readable(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp); stream=io.StringIO(); renderer=LiveConsoleRenderer(stream=stream,color=False)

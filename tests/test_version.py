@@ -12,7 +12,7 @@ from pavlusha_agent.live import LiveConsoleRenderer
 class VersionTests(unittest.TestCase):
     def test_entry_points_report_release_without_other_arguments(self):
         root = Path(__file__).resolve().parents[1]
-        self.assertEqual(__version__, '0.7.0')
+        self.assertEqual(__version__, '0.8.0')
         for script in ('agent.py', 'project_state_agent.py'):
             with self.subTest(script=script):
                 result = subprocess.run([sys.executable, str(root / script), '--version'],

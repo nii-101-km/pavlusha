@@ -19,7 +19,10 @@ def digest(value):
 class ProjectState:
     name = 'project_state'
 
-    def __init__(self, *, review_every=10, directory=None):
+    def __init__(self, *, review_every=10, directory=None, combined_review=False):
+        if type(combined_review) is not bool:
+            raise ValueError("combined_review must be boolean")
+        self.combined_review = combined_review
         if type(review_every) is not int or review_every < 0:
             raise ValueError('review_every must be a nonnegative integer')
         self.review_every = review_every
@@ -31,7 +34,7 @@ class ProjectState:
         self.want_reset = False
         self.recovering = False
         self.recovery_epoch = None
-        self.tools = declarations(self.invoke)
+        self.tools = declarations(self.invoke, combined_review=combined_review)
         self.read_turns = None
 
     def bind_event_journal(self, read_turns):
@@ -166,7 +169,14 @@ class ProjectState:
         self.save(updated)
 
     def refresh_prefix(self):
-        self.frozen_prefix = {'state': model.project_state_message(self.data['project'])['content']}
+        project = self.data['project']
+        # At session start the plan has not yet been generated. Keep this
+        # snapshot accurate after project_init without changing the prefix:
+        # the accepted plan and subsequent updates appear in turn history.
+        state = (model.project_state_message(project)['content'] if project['initialized'] else
+                 'PROJECT STATE: No plan was present at the start of this context. '
+                 'Use the subsequent project_init result and later updates in history as the current state.')
+        self.frozen_prefix = {'state': state}
         checkpoint = self.data['checkpoint']
         if checkpoint and checkpoint['handoff']:
             self.frozen_prefix['handoff'] = model.handoff_message(checkpoint['handoff'])['content']
@@ -178,19 +188,23 @@ class ProjectState:
             names, exclusive, ready = ('project_init',), True, False
             message = 'Initialize Project State with project_init before ordinary work.'
         elif review:
-            names, exclusive, ready = ('project_update', 'project_review_complete'), True, False
-            message = ('PROJECT STATE REVIEW REQUIRED: ' + review + '. Ordinary tools are isolated. '
-                       'Record remaining durable changes, then project_review_complete with a brief handoff. '
-                       'Updating State alone does not release the review.')
+            names, exclusive, ready = (('project_review_complete',) if self.combined_review else ('project_update', 'project_review_complete')), True, False
+            message = ('PROJECT STATE REVIEW REQUIRED: ' + review + '. Ordinary tools are isolated. ' +
+                       ('Call project_review_complete once with optional changes and a handoff describing the next action; shell will become available after review.' if self.combined_review else
+                        'Record remaining durable changes, then project_review_complete with a brief handoff. Updating State alone does not release the review.'))
         else:
             names, exclusive, ready = ('project_update', 'finish'), False, True
             message = ''
         if self.recovering and self.data.get('checkpoint'):
             ready = True
         prefix = copy.deepcopy(self.frozen_prefix)
-        prefix['instructions'] = ('PROJECT STATE EXTENSION IS ENABLED in this composed session. '
-            'Keep durable State current. Finish only after all work is DONE or SUPERSEDED.')
-        contribution = Contribution(prefix=prefix,
+        rules = {
+            'project_init': 'Initialize a concrete plan with at least two work items, exactly one ACTIVE and at least one PLANNED before ordinary work.',
+            'project_update': 'Keep durable State current: record decisions, work status and evidence; exactly one item must be ACTIVE while work remains. BLOCKED requires a reason; SUPERSEDED requires a deviation.',
+            'project_review_complete': 'For a required review, update durable State and provide a short nonempty handoff with the immediate next action and unfinished verification.',
+            'finish': 'Finish only when all work is DONE or SUPERSEDED, backed by evidence.'}
+        system_instructions = '\n'.join(rules[name] for name in names)
+        contribution = Contribution(prefix=prefix, system_instructions=system_instructions,
             message=message,
             tools=tuple(self.tools[name] for name in names), exclusive=exclusive, reset_ready=ready)
         return EventReply(contribution, (Control('reset', 'Project State checkpoint ready'),) if self.want_reset else ())
@@ -272,20 +286,23 @@ class ProjectState:
                 handoff = model.validate_handoff(values['handoff'])
                 if not handoff:
                     raise AgentError('a nonempty handoff is required')
+                if values.get('changes'):
+                    if not self.combined_review:
+                        raise AgentError('combined review changes are not enabled')
+                    updated['project'] = model.apply_project_changes(updated['project'], values['changes'])
                 updated['project'] = model.complete_review(updated['project'], operation_count=updated['operation_count'])
                 reset_requested = bool(updated['review_reason'].startswith('reset:'))
                 self.checkpoint(updated, handoff)
             self.save(updated)
             if name == 'project_review_complete' and reset_requested:
                 self.want_reset = True
-            if name == 'project_init':
-                self.refresh_prefix()
             return Outcome({'status': 'accepted', 'project_state': copy.deepcopy(updated['project'])})
         except AgentError as exc:
             return Outcome({'error': 'project_state_rejected', 'detail': str(exc)})
 
 
 def create_extension(*, settings, context):
-    if set(settings) - {'review_every'}:
-        raise ValueError('Project State accepts review_every only')
-    return ProjectState(review_every=settings.get('review_every', context.get('review_every', 10)))
+    if set(settings) - {'review_every', 'combined_review'}:
+        raise ValueError('Project State accepts review_every and combined_review only')
+    return ProjectState(review_every=settings.get('review_every', context.get('review_every', 10)),
+                        combined_review=settings.get('combined_review', False))

@@ -17,7 +17,7 @@ class BasicHost:
         if event.kind != 'session_started':
             return None
         return Contribution(tools=(
-            Tool('shell', 'Run one bounded foreground shell command in /work.', {
+            Tool('shell', 'Run one bounded foreground shell command in /work. Files in /work persist; each command starts fresh processes. Verify changes and inspect errors.', {
                 'type': 'object', 'properties': {
                     'command': {'type': 'string', 'minLength': 1},
                     'network': {'type': 'boolean'}, 'gpu': {'type': 'boolean'},

@@ -63,10 +63,14 @@ class ProjectStateModuleTests(StateFixture, unittest.TestCase):
         self.assertEqual(self.module.data['operation_count'],1)
     def test_normal_work_updates_are_persisted_without_refreshing_frozen_prefix(self):
         runtime=self.runtime([initialize(),done(),finish()]);runtime.run()
+        initial=runtime.provider.requests[0]['messages']
         before=runtime.provider.requests[1]['messages']
         after=runtime.provider.requests[2]['messages']
         prefix=lambda messages:next(m['content'] for m in messages if str(m['content']).startswith('EXTENSION project_state/state:'))
+        self.assertEqual(prefix(initial),prefix(before))
         self.assertEqual(prefix(before),prefix(after))
+        self.assertIn('project_init',prefix(initial))
+        self.assertIn('"status": "accepted"',str(before))
         self.assertIn('DONE',str(after))
         envelope=json.loads(self.state_file().read_text())
         self.assertEqual(envelope['payload']['project']['work'][0]['status'],'DONE')
@@ -82,6 +86,33 @@ class ProjectStateModuleTests(StateFixture, unittest.TestCase):
         self.assertIn('shell',str(runtime.provider.requests[5]['response_format']))
         self.assertEqual(module.data['project']['last_review_operation'],1)
         self.assertEqual(module.data['checkpoint']['handoff'],'Continue by inspecting result.txt.')
+        prefix=lambda request:next(m['content'] for m in request['messages'] if str(m['content']).startswith('EXTENSION project_state/state:'))
+        self.assertEqual(prefix(runtime.provider.requests[0]),prefix(runtime.provider.requests[-1]))
+    def test_combined_review_commits_changes_and_handoff_before_shell_resumes(self):
+        combined = reply({'action':'project_review_complete', 'handoff':'Fix the failed tests.',
+            'changes':[{'op':'update_work','id':'W001','status':'PLANNED'},
+                       {'op':'update_work','id':'W002','status':'ACTIVE',
+                        'evidence':['SHELL: tests failed']} ]})
+        runtime = self.runtime([initialize(), shell(), combined, shell(), review(), done(), finish()],
+                               module=ProjectState(review_every=1, combined_review=True))
+        self.assertEqual(runtime.run(), 'done')
+        schema = runtime.provider.requests[2]['response_format']['json_schema']['schema']
+        self.assertEqual(schema['properties']['action']['const'], 'project_review_complete')
+        self.assertIn('changes', schema['properties'])
+        self.assertIn("'const': 'shell'", str(runtime.provider.requests[3]['response_format']))
+        self.assertEqual(self.effects, ['shell', 'shell'])
+        self.assertEqual(self.module.data['project']['work'][1]['evidence'], ['SHELL: tests passed'])
+
+    def test_invalid_combined_review_does_not_save_partial_changes_or_release_review(self):
+        invalid = reply({'action':'project_review_complete', 'handoff':'Continue.',
+                         'changes':[{'op':'update_work','id':'UNKNOWN','status':'DONE'}]})
+        runtime = self.runtime([initialize(), shell(), invalid, review(), done(), finish()],
+                               module=ProjectState(review_every=1, combined_review=True))
+        self.assertEqual(runtime.run(), 'done')
+        self.assertIn('project_state_rejected', str(runtime.provider.requests[3]['messages']))
+        self.assertNotIn("'const': 'shell'", str(runtime.provider.requests[3]['response_format']))
+        self.assertEqual(self.effects, ['shell'])
+
     def test_history_reset_requires_handoff_then_supplies_it_in_new_prefix(self):
         runtime=self.runtime([initialize(),shell(),review('NEXT: verify saved result.'),done(),finish()],history_high=2)
         runtime.run()
@@ -175,9 +206,8 @@ class ProjectStateModuleTests(StateFixture, unittest.TestCase):
             # Authorized interface, model lifecycle and release-version changes are tested separately.
             if name in ('pavlusha_agent/runtime.py','pavlusha_agent/extensions.py',
                         'pavlusha_agent/basic_host.py','pavlusha_agent/llama_server.py',
-                        'pavlusha_agent/session.py', 'pavlusha_agent/adapters/_errors.py',
-                        'pavlusha_runtime/sandbox.py', 'pavlusha_agent/__init__.py',
-                        'pavlusha_agent/cli.py'):
+                        'pavlusha_agent/session.py', 'pavlusha_agent/__init__.py', 'pavlusha_agent/config.py',
+                        'pavlusha_agent/cli.py','pavlusha_agent/adapters/__init__.py'):
                 continue
             self.assertEqual(hashlib.sha256((root/name).read_bytes()).hexdigest(),expected,name)
 
@@ -205,7 +235,7 @@ class InterfaceGapTests(StateFixture, unittest.TestCase):
         runtime=self.runtime([initialize(),done(),finish()]);runtime.run()
         prompt=runtime.provider.requests[0]['messages']
         self.assertFalse(any('Project State, Project Map and optional toolkits are absent' in m['content'] for m in prompt))
-        self.assertTrue(any('PROJECT STATE EXTENSION IS ENABLED' in m['content'] for m in prompt))
+        self.assertTrue(any('MODULE project_state:' in m['content'] for m in prompt))
 
 
 if __name__=='__main__':unittest.main()

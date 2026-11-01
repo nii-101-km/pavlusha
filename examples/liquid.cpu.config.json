@@ -1,0 +1,47 @@
+{
+  "runtime": {
+    "backend": "llama-cpp",
+    "base_url": "http://127.0.0.1:18951/v1",
+    "model": "lfm3-1.7b",
+    "worker_context_budget": 7000,
+    "history_context_high": 0.5,
+    "max_tokens": 7000,
+    "interactive": false,
+    "live": true,
+    "llama_server": {
+      "argv": [
+        "/absolute/path/to/llama-server",
+        "--model",
+        "/absolute/path/to/model.gguf",
+        "--alias",
+        "lfm3-1.7b",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "18951",
+        "--ctx-size",
+        "8192",
+        "--gpu-layers",
+        "0"
+      ]
+    }
+  },
+  "modules": [
+    {
+      "factory": "pavlusha_modules.shell:create_extension"
+    },
+    {
+      "factory": "pavlusha_modules.finish:create_extension"
+    },
+    {
+      "factory": "pavlusha_modules.loop_detection:create_extension"
+    },
+    {
+      "factory": "pavlusha_modules.token_window:create_extension",
+      "settings": {
+        "retain_fraction": 0.25,
+        "single_fraction": 0.4
+      }
+    }
+  ]
+}

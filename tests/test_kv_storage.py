@@ -60,6 +60,14 @@ class KvStorageTests(unittest.TestCase):
         argv=launch.call_args.args[0]
         self.assertEqual(argv[-3:],('--slots','--slot-save-path',directory.name))
         self.assertEqual(manager.process,process)
+    def test_prepared_directory_is_reused_and_cleaned(self):
+        manager = self.manager(preserve_kv=True, kv_storage='ram')
+        path = Path(manager.prepare_kv_directory())
+        self.assertTrue(path.is_dir())
+        self.assertEqual(str(path), manager.prepare_kv_directory())
+        manager.__exit__(None, None, None)
+        self.assertFalse(path.exists())
+        self.assertIsNone(self.manager().prepare_kv_directory())
     def test_save_failure_keeps_model_loaded_and_does_not_execute(self):
         manager=self.manager(preserve_kv=True,kv_storage='ram')
         manager.process=Mock();manager.process.poll.return_value=None

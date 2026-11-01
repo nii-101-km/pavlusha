@@ -1,0 +1,100 @@
+{
+  "runtime": {
+    "backend": "llama-cpp",
+    "base_url": "http://127.0.0.1:8899/v1",
+    "model": "state-qwen",
+    "worker_context_budget": 110000,
+    "enable_server_control": true,
+    "interactive": true,
+    "live": true,
+    "llama_server": {
+      "argv": [
+        "/absolute/path/to/llama-server",
+        "--model",
+        "/absolute/path/to/model.gguf",
+        "--alias",
+        "state-qwen",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8899",
+        "--parallel",
+        "1",
+        "--ctx-size",
+        "110000",
+        "--checkpoint-min-step",
+        "256",
+        "--spec-type",
+        "draft-mtp",
+        "--spec-draft-n-max",
+        "4",
+        "--gpu-layers",
+        "99",
+        "--split-mode",
+        "layer",
+        "--tensor-split",
+        "0.60,0.40",
+        "--flash-attn",
+        "on",
+        "--cache-type-k",
+        "q8_0",
+        "--cache-type-v",
+        "q8_0",
+        "--jinja",
+        "--reasoning-effort",
+        "low",
+        "--reasoning-format",
+        "deepseek",
+        "--batch-size",
+        "512",
+        "--ubatch-size",
+        "128",
+        "--reasoning-budget",
+        "1024"
+      ],
+      "preserve_kv": true,
+      "kv_storage": "ram"
+    }
+  },
+  "modules": [
+    {
+      "factory": "pavlusha_modules.shell:create_extension"
+    },
+    {
+      "factory": "pavlusha_modules.project_state:create_extension"
+    },
+    {
+      "factory": "pavlusha_modules.project_map:create_extension"
+    },
+    {
+      "factory": "pavlusha_modules.images:create_extension"
+    },
+    {
+      "factory": "pavlusha_modules.processes:create_extension"
+    },
+    {
+      "factory": "pavlusha_modules.gui:create_extension"
+    },
+    {
+      "factory": "pavlusha_modules.browser:create_extension"
+    },
+    {
+      "factory": "pavlusha_modules.expert:create_extension"
+    },
+    {
+      "factory": "pavlusha_modules.office:create_extension"
+    },
+    {
+      "factory": "pavlusha_modules.gpu_shell:create_extension"
+    },
+    {
+      "factory": "pavlusha_modules.reasoning_code:create_extension"
+    },
+    {
+      "factory": "pavlusha_modules.loop_detection:create_extension"
+    },
+    {
+      "factory": "pavlusha_modules.interactive:create_extension"
+    }
+  ]
+}

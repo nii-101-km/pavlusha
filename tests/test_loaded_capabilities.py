@@ -19,7 +19,7 @@ class LoadedCapabilitiesTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
         self.root=Path(self.tmp.name); self.work=self.root/'work'; self.work.mkdir()
-        self.manifest=Path(__file__).resolve().parents[1]/'examples/state-map.modules.json'
+        self.manifest=Path(__file__).resolve().parents[1]/'examples/qwen.native.config.json'
     def modules(self, path=None):
         return load_modules(path or self.manifest,context={'workdir':str(self.work),
             'review_every':0,'network':False,'command_timeout':10,'output_limit':24000})
@@ -44,7 +44,7 @@ class LoadedCapabilitiesTests(unittest.TestCase):
         self.assertEqual(prefix(first),prefix(second))
         self.assertFalse(any(str(m.get('content','')).startswith('EXTENSION ') for m in first[-3:]))
         for name in ('processes','browser','interactive','loop_detection'):
-            self.assertIn(f'EXTENSION {name}/instructions:',str(prefix(first)))
+            self.assertIn(f'MODULE {name}:', first[0]['content'])
     def test_tool_examples_match_browser_and_process_permissions(self):
         from pavlusha_modules.processes import Processes
         from pavlusha_modules.browser import Browser

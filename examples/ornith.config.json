@@ -1,0 +1,84 @@
+{
+  "runtime": {
+    "backend": "llama-cpp",
+    "base_url": "http://127.0.0.1:18904/v1",
+    "model": "ornith-1.5-35b",
+    "worker_context_budget": 65536,
+    "history_context_high": 0.5,
+    "max_tokens": 16384,
+    "interactive": false,
+    "live": true,
+    "llama_server": {
+      "argv": [
+        "/absolute/path/to/llama-server",
+        "--model",
+        "/absolute/path/to/model.gguf",
+        "--alias",
+        "ornith-1.5-35b",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "18904",
+        "--parallel",
+        "1",
+        "--ctx-size",
+        "65536",
+        "--checkpoint-min-step",
+        "256",
+        "--gpu-layers",
+        "99",
+        "--split-mode",
+        "layer",
+        "--tensor-split",
+        "0.60,0.40",
+        "--flash-attn",
+        "on",
+        "--cache-type-k",
+        "q8_0",
+        "--cache-type-v",
+        "q8_0",
+        "--jinja",
+        "--reasoning-format",
+        "deepseek",
+        "--batch-size",
+        "512",
+        "--ubatch-size",
+        "128",
+        "--reasoning-budget",
+        "-1",
+        "--top-p",
+        "0.95",
+        "--top-k",
+        "20",
+        "--min-p",
+        "0.0",
+        "--presence-penalty",
+        "0.0",
+        "--repeat-penalty",
+        "1.0"
+      ]
+    },
+    "api_timeout": 600,
+    "temperature": 0.6,
+    "max_steps": 1000000000
+  },
+  "modules": [
+    {
+      "factory": "pavlusha_modules.shell:create_extension"
+    },
+    {
+      "factory": "pavlusha_modules.project_state:create_extension",
+      "settings": {
+        "combined_review": true
+      }
+    },
+    {
+      "factory": "pavlusha_modules.loop_detection:create_extension",
+      "settings": {
+        "reasoning_window_words": 80,
+        "reasoning_stride_words": 20,
+        "reasoning_min_lag_words": 80
+      }
+    }
+  ]
+}

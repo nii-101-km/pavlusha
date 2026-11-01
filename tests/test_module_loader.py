@@ -1,6 +1,7 @@
 """Manifest validation and State/Map composition through the real runtime."""
 import json
 from pathlib import Path
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -10,9 +11,50 @@ from pavlusha_agent.runtime import Runtime
 from pavlusha_modules.loader import load_modules
 from tests.test_events import Provider
 from tests.test_project_state_module import StateFixture, initialize, shell, review, done, finish
+from project_state_agent import module_context, main
+from pavlusha_agent.cli import build_parser
 
 
 class ModuleLoaderTests(StateFixture, unittest.TestCase):
+    def test_failed_module_loading_cleans_prepared_server_directory(self):
+        directory = self.root/'kv'
+        directory.mkdir()
+        server = unittest.mock.MagicMock()
+        server.prepare_kv_directory.return_value = str(directory)
+        config = self.root/'assembly.json'
+        config.write_text(json.dumps({'modules': [], 'runtime': {'model': 'worker',
+                           'llama_server_config': 'server.json', 'interactive': False}}))
+        argv = ['project_state_agent.py', '--workdir', str(self.work),
+                '--session-dir', str(self.root/'session'), '--config', str(config), 'task']
+        with patch.object(sys, 'argv', argv), patch('project_state_agent.ManagedLlamaServer', return_value=server), \
+             patch('project_state_agent.load_modules', side_effect=AgentError('bad module')) as load, \
+             patch('sys.stderr'):
+            self.assertEqual(main(), 2)
+        self.assertEqual(load.call_args.kwargs['context']['kv_storage_dir'], str(directory))
+        server.start.assert_not_called()
+        server.__exit__.assert_called_once_with(None, None, None)
+
+    def test_launch_settings_are_exposed_to_modules(self):
+        parser = build_parser()
+        parser.add_argument('--review-every', type=int, default=10)
+        parser.add_argument('--modules', type=Path, default=self.root/'modules.json')
+        parser.add_argument('--interactive', default=None)
+        parser.add_argument('--live-format', default='human')
+        args = parser.parse_args(['--workdir', str(self.work), '--session-dir', str(self.root/'session'),
+                                  '--model', 'worker', '--base-url', 'http://localhost:9000/v1',
+                                  '--temperature', '0.3', '--history-high', '37'])
+        context = module_context(args, self.work, self.root/'session')
+        self.assertEqual(context['base_url'], 'http://localhost:9000/v1')
+        self.assertEqual(context['model'], 'worker')
+        self.assertEqual(context['temperature'], 0.3)
+        self.assertEqual(context['history_high'], 37)
+        self.assertEqual(context['session_dir'], str(self.root/'session'))
+        self.assertIsNone(context['llama_server_config'])
+        self.assertIsNone(context['kv_storage_dir'])
+        self.assertEqual(context['modules_path'], str((self.root/'modules.json').resolve()))
+        self.assertEqual(module_context(args, self.work, self.root/'session', '/dev/shm/kv')['kv_storage_dir'],
+                         '/dev/shm/kv')
+
     def load(self, value):
         path = self.root/'modules.json'
         path.write_text(json.dumps(value))
@@ -37,7 +79,7 @@ class ModuleLoaderTests(StateFixture, unittest.TestCase):
                 self.load({'modules':entries})
 
     def test_default_manifest_constructs_handlers_without_starting_resources(self):
-        path = Path(__file__).resolve().parents[1]/'examples/state-map.modules.json'
+        path = Path(__file__).resolve().parents[1]/'examples/qwen.native.config.json'
         modules = load_modules(path, context={'workdir':str(self.work), 'review_every':3})
         self.assertEqual([m.name for m in modules], ['shell','project_state','project_map',
             'images','processes','gui','browser','expert','office','gpu_shell',
