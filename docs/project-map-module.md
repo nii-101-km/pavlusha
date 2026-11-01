@@ -1,7 +1,7 @@
 # Project Map как внешний модуль
 
 `project_state_agent.py` подключает Shell, Project State и Project Map.
-Map использует общий контракт v2 без предметных правил в ядре. Зависимости для индексации перечислены в
+Map использует общий контракт v3 без предметных правил в ядре. Зависимости для индексации перечислены в
 `requirements.txt`: Tree-sitter и грамматика Python.
 
 `pavlusha_modules.project_map.ProjectMap(workdir)` использует прежний индексатор,

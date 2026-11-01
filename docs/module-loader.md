@@ -77,7 +77,7 @@ python project_state_agent.py --config examples/liquid.cpu.config.json \
 Состав модулей не записывается в техническую сессию: для возобновления следует
 использовать ту же конфигурацию. Горячей замены во время сессии нет.
 
-Загрузчик работает с общим контрактом v2 (см. `event-interface.md`).
+Загрузчик работает с общим контрактом v3 (см. `event-interface.md`).
 Модуль оркестрации подключён в `examples/arishka-pavlusha.config.json`;
 его настройки и ограничения описаны в [orchestration.md](orchestration.md).
 Проверки: `tests/test_module_loader.py`.

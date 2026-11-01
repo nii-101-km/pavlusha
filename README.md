@@ -84,7 +84,7 @@ and manual history editing have not been carried over.
 
 ## Interface and limitations
 
-The [v2 interface](docs/event-interface.md) describes events, contributions, controls,
+The [v3 interface](docs/event-interface.md) describes events, contributions, controls,
 invocation context, observations, exclusive modes, and model release. Modules store
 their state separately from the technical session; there is no shared crash-safe
 transaction between them. An interrupted action with an unknown result blocks
