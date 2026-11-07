@@ -15,6 +15,7 @@ from pavlusha_agent.llama_server import ManagedLlamaServer
 from pavlusha_agent.llama_server_proxy import AttachedLlamaServer, LlamaServerControl
 from pavlusha_agent.live import LiveConsoleRenderer
 from pavlusha_agent.runtime import Runtime
+from pavlusha_agent.process_supervision import report_interrupted, termination_signals
 from pavlusha_agent.terminal_input import TerminalInput
 from pavlusha_modules.loader import load_modules
 
@@ -41,6 +42,7 @@ def main():
     parser.add_argument('--workdir', required=True)
     parser.add_argument('--session-dir', required=True)
     parser.add_argument('--user-input', help='Reply to a paused experimental session')
+    parser.add_argument('--keep-server', action='store_true', help='Reuse or leave the managed llama-server running')
     parser.add_argument('--server-control-path', help=argparse.SUPPRESS)
     parser.add_argument('--kv-storage-dir', help=argparse.SUPPRESS)
     parser.add_argument('task', nargs='*')
@@ -53,6 +55,12 @@ def main():
         args.user_input = launch.user_input
         args.server_control_path = launch.server_control_path
         args.kv_storage_dir = launch.kv_storage_dir
+        if launch.keep_server and args.server_control_path:
+            raise AgentError('--keep-server cannot be combined with an inherited server-control path')
+        if launch.keep_server and args.backend != 'llama-cpp':
+            raise AgentError('--keep-server requires the llama-cpp backend')
+        if launch.keep_server and not args.llama_server_config:
+            raise AgentError('--keep-server requires llama_server configuration to verify the adapter')
         args.enable_server_control = getattr(args, 'enable_server_control', False)
         if args.server_control_path:
             # A delegated child attaches to its parent's server, never starts another.
@@ -74,19 +82,41 @@ def main():
                 raise AgentError('server-control-path and llama-server-config are mutually exclusive')
             if args.enable_server_control and not args.llama_server_config:
                 raise AgentError('enable-server-control requires a managed llama-server')
-            server = (ManagedLlamaServer(args.llama_server_config, args.base_url,
-                session_dir.with_suffix('.server.log'), args.api_timeout)
-                if args.llama_server_config else
-                AttachedLlamaServer(args.base_url, args.server_control_path, args.api_timeout)
-                if args.server_control_path else None)
+            keep_status = None
+            if launch.keep_server:
+                from pavlusha_agent.persistent_server import PersistentLlamaServer, server_lock, state_key, state_root
+                root = state_root()
+                key = state_key(args.base_url)
+                cleanup.enter_context(server_lock(root, key))
+                server = PersistentLlamaServer(args.llama_server_config, args.base_url,
+                    root / (key + '.log'), args.api_timeout, args.model, root, key,
+                    api_key=os.environ.get(args.api_key_env, ''))
+                cleanup.callback(server.__exit__, None, None, None)
+                if args.enable_server_control and not server.preserve_kv:
+                    raise AgentError('enable-server-control requires preserve_kv')
+                keep_status = server.attach_or_start()
+                print(f'Persistent llama-server: {keep_status} ({args.base_url})', file=sys.stderr, flush=True)
+            else:
+                server = (ManagedLlamaServer(args.llama_server_config, args.base_url,
+                    session_dir.with_suffix('.server.log'), args.api_timeout)
+                    if args.llama_server_config else
+                    AttachedLlamaServer(args.base_url, args.server_control_path, args.api_timeout)
+                    if args.server_control_path else None)
             kv_storage_dir = args.kv_storage_dir if args.server_control_path else None
             if args.llama_server_config:
-                cleanup.callback(server.__exit__, None, None, None)
+                if not launch.keep_server:
+                    cleanup.callback(server.__exit__, None, None, None)
                 kv_storage_dir = server.prepare_kv_directory()
                 if args.enable_server_control and not kv_storage_dir:
                     raise AgentError('enable-server-control requires preserve_kv')
                 if args.enable_server_control:
                     args.server_control_path = str(Path(kv_storage_dir) / 'control.sock')
+                    if launch.keep_server:
+                        control = Path(args.server_control_path)
+                        if control.exists():
+                            if control.is_symlink() or not control.is_socket() or control.stat().st_uid != os.getuid():
+                                raise AgentError('unsafe existing server control path')
+                            control.unlink()
             extensions = load_modules(args.modules, context=module_context(args, workdir, session_dir, kv_storage_dir))
             interactive = sys.stdin.isatty() if args.interactive is None else args.interactive
             if interactive and not sys.stdin.isatty():
@@ -97,7 +127,8 @@ def main():
             from pavlusha_agent.extensions import EventHost
             EventHost(extensions)
             if args.llama_server_config:
-                server.start()
+                if not launch.keep_server:
+                    server.start()
                 if args.server_control_path:
                     cleanup.enter_context(LlamaServerControl(server, args.server_control_path))
             provider = ChatProvider(args.base_url, args.model, os.environ.get(args.api_key_env, ''), args.api_timeout,
@@ -121,7 +152,7 @@ def main():
                 print(summary)
         return 0
     except KeyboardInterrupt:
-        print('Interrupted.', file=sys.stderr)
+        report_interrupted()
         return 130
     except (AgentError, OSError, ValueError) as exc:
         print(f'ERROR: {exc}', file=sys.stderr)
@@ -129,4 +160,5 @@ def main():
 
 
 if __name__ == '__main__':
-    raise SystemExit(main())
+    with termination_signals():
+        raise SystemExit(main())

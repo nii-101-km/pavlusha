@@ -1,3 +1,4 @@
+from tests.office_test_conversion import convert
 """Exercise explicitly loaded built-in modules through the actual runtime."""
 import base64
 from contextlib import contextmanager
@@ -127,13 +128,13 @@ class LoadedCapabilitiesTests(unittest.TestCase):
         self.runtime(provider,modules).run()
         self.assertIn('Repeated action/result cycle detected',str(provider.requests[4]['messages']))
     def test_office_file_errors_do_not_stop_the_loaded_session(self):
-        provider=Provider([initialize(),reply({'action':'docx_inspect','path':'missing.docx'}),
-            reply({'action':'xlsx_inspect','path':'missing.xlsx'}),done(),finish()])
+        provider=Provider([initialize(),reply({'action':'odt_inspect','path':'missing.odt'}),
+            reply({'action':'ods_inspect','path':'missing.ods'}),done(),finish()])
         runtime=self.runtime(provider)
         self.assertEqual(runtime.run(),'done')
         self.assertEqual(runtime.session.state['status'],'finished')
         self.assertEqual(len(provider.requests),5)
-        for index, path in ((2,'missing.docx'),(3,'missing.xlsx')):
+        for index, path in ((2,'missing.odt'),(3,'missing.ods')):
             messages=str(provider.requests[index]['messages'])
             self.assertIn(path,messages)
             self.assertIn('file_not_found',messages)
@@ -166,35 +167,36 @@ class LoadedCapabilitiesTests(unittest.TestCase):
         self.assertIn('generation_interrupted',str(provider.requests[2]['messages']))
     def test_module_unavailable_dependencies_are_explicit(self):
         from pavlusha_modules.office import Office
-        # Validate each Office extension instance has separate legacy state.
+        # Validate each Office extension instance has a separate adapter/workdir.
+        (self.root/'other').mkdir()
         first=Office(self.work,24000);second=Office(self.root/'other',24000)
         first.on_event(Event('session_started','a',0,0));second.on_event(Event('session_started','b',0,0))
-        self.assertNotEqual(first.modules['docx']._ROOT,second.modules['docx']._ROOT)
+        self.assertNotEqual(first.calc.root,second.calc.root)
         first.on_event(Event('session_stopped','a',0,0));second.on_event(Event('session_stopped','b',0,0))
 
     def test_builtin_office_read_and_edit_real_files(self):
         import docx
         import openpyxl
-        document=docx.Document();document.add_paragraph('before');document.save(self.work/'sample.docx')
-        workbook=openpyxl.Workbook();workbook.active['A1']='before';workbook.save(self.work/'sample.xlsx')
+        document=docx.Document();document.add_paragraph('before');document.save(self.work/'fixture.docx'); (self.work/'sample.odt').write_bytes(convert(self.work/'fixture.docx','odt').read_bytes())
+        workbook=openpyxl.Workbook();workbook.active['A1']='before';workbook.save(self.work/'fixture.xlsx'); (self.work/'sample.ods').write_bytes(convert(self.work/'fixture.xlsx','ods').read_bytes())
         modules=self.modules();office=next(m for m in modules if m.name=='office')
         contribution=office.on_event(Event('session_started','s',0,0))
         self.addCleanup(lambda:office.on_event(Event('session_stopped','s',0,0)))
         tools={t.name:t for t in contribution.tools}
-        doc=tools['docx_inspect'].invoke({'path':'sample.docx'},None).result
+        doc=tools['odt_inspect'].invoke({'path':'sample.odt'},None).result
         self.assertTrue(doc['ok']); node=doc['items'][0]['id']
-        edited=tools['docx_edit'].invoke({'path':'sample.docx','output_path':'edited.docx',
+        edited=tools['odt_edit'].invoke({'path':'sample.odt','output_path':'edited.odt',
             'revision':doc['revision'],'edits':[{'node_id':node,'old':'before','new':'after'}]},None).result
         self.assertTrue(edited['ok'],edited)
-        self.assertEqual(docx.Document(self.work/'edited.docx').paragraphs[0].text,'after')
-        book=tools['xlsx_inspect'].invoke({'path':'sample.xlsx'},None).result
+        self.assertEqual(docx.Document(convert(self.work/'edited.odt','docx')).paragraphs[0].text,'after')
+        book=tools['ods_inspect'].invoke({'path':'sample.ods'},None).result
         self.assertTrue(book['ok'])
-        edited=tools['xlsx_edit'].invoke({'path':'sample.xlsx','output_path':'edited.xlsx',
+        edited=tools['ods_edit'].invoke({'path':'sample.ods','output_path':'edited.ods',
             'revision':book['revision'],'edits':[{'sheet':'Sheet','cell':'A1','value':'after'}]},None).result
         self.assertTrue(edited['ok'],edited)
-        self.assertEqual(openpyxl.load_workbook(self.work/'edited.xlsx').active['A1'].value,'after')
-        self.assertEqual(docx.Document(self.work/'sample.docx').paragraphs[0].text,'before')
-        self.assertEqual(openpyxl.load_workbook(self.work/'sample.xlsx').active['A1'].value,'before')
+        self.assertEqual(openpyxl.load_workbook(convert(self.work/'edited.ods','xlsx')).active['A1'].value,'after')
+        self.assertEqual(docx.Document(convert(self.work/'sample.odt','docx')).paragraphs[0].text,'before')
+        self.assertEqual(openpyxl.load_workbook(convert(self.work/'sample.ods','xlsx')).active['A1'].value,'before')
 
     def test_loaded_browser_target_and_expert_policy_are_explicit(self):
         import json
@@ -271,13 +273,13 @@ class LoadedCapabilitiesTests(unittest.TestCase):
 
     def test_office_tools_are_callable_by_model_through_loader(self):
         import docx, openpyxl
-        document=docx.Document();document.add_paragraph('office marker');document.save(self.work/'a.docx')
-        book=openpyxl.Workbook();book.active['A1']='sheet marker';book.save(self.work/'a.xlsx')
-        provider=Provider([initialize(),reply({'action':'docx_inspect','path':'a.docx'}),
-            reply({'action':'xlsx_inspect','path':'a.xlsx'}),done(),finish()])
+        document=docx.Document();document.add_paragraph('office marker');document.save(self.work/'fixture.docx'); (self.work/'a.odt').write_bytes(convert(self.work/'fixture.docx','odt').read_bytes())
+        book=openpyxl.Workbook();book.active['A1']='sheet marker';book.save(self.work/'fixture.xlsx'); (self.work/'a.ods').write_bytes(convert(self.work/'fixture.xlsx','ods').read_bytes())
+        provider=Provider([initialize(),reply({'action':'odt_inspect','path':'a.odt'}),
+            reply({'action':'ods_inspect','path':'a.ods'}),done(),finish()])
         self.runtime(provider).run()
         self.assertIn('office marker',str(provider.requests[2]['messages']))
-        self.assertIn('a.xlsx',str(provider.requests[3]['messages']))
+        self.assertIn('a.ods',str(provider.requests[3]['messages']))
         self.assertIn('workbook',str(provider.requests[3]['messages']))
 
     def test_denied_gpu_network_is_rejected_before_model_release(self):

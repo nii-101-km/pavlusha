@@ -1,6 +1,7 @@
 """Sequential delegation to another Pavlusha with a separate workspace."""
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -57,11 +58,16 @@ class Orchestration:
             return Contribution(message=(
                 'Use delegate_agent for a sequential child agent. It gets a separate workspace. '
                 'inputs are paths relative to /work; use "." for the whole workspace. '
-                'Use collect_agent to copy selected results back without overwriting files.'), tools=(
-                declare('delegate_agent', 'Run a child agent and wait for it.',
-                        {'task': TEXT, 'inputs': PATHS}, ('task', 'inputs'), self.delegate),
-                declare('collect_agent', 'Copy child files to the same paths in this workspace.',
-                        {'child_id': TEXT, 'paths': PATHS}, ('child_id', 'paths'), self.collect),))
+                'Use collect_agent to copy selected results back without overwriting files. '
+                'For programmatic calls, collect_agent requires child_id from delegate_agent: '
+                'child = call("delegate_agent", task=..., inputs=[]); '
+                'print(child["child_id"], flush=True); '
+                'call("collect_agent", child_id=child["child_id"], paths=[...]). '
+                'Do not repeat successful delegation just because a later call failed.'), tools=(
+                replace(declare('delegate_agent', 'Run a child agent and wait for it.',
+                        {'task': TEXT, 'inputs': PATHS}, ('task', 'inputs'), self.delegate), programmatic=True),
+                replace(declare('collect_agent', 'Copy child files to the same paths in this workspace.',
+                        {'child_id': TEXT, 'paths': PATHS}, ('child_id', 'paths'), self.collect), programmatic=True),))
 
     def _command(self, task, work, state):
         ctx = self.context
@@ -154,11 +160,16 @@ class ArishkaDelegation:
         if event.kind == 'session_started':
             self.children = Path(event.data['session_dir']).resolve() / 'children'
             return Contribution(message=('Call delegate_agent to give a focused task to a local Pavlusha. '
-                'Each child has a separate workspace. Use collect_agent for newly created output files.'), tools=(
-                declare('delegate_agent', 'Run a local child agent and wait for its result.',
-                        {'task': TEXT, 'inputs': PATHS}, ('task', 'inputs'), self.delegate),
-                declare('collect_agent', 'Copy selected child files without overwriting existing files.',
-                        {'child_id': TEXT, 'paths': PATHS}, ('child_id', 'paths'), self.collect)))
+                'Each child has a separate workspace. Use collect_agent for newly created output files. '
+                'For programmatic calls, collect_agent requires child_id from delegate_agent: '
+                'child = call("delegate_agent", task=..., inputs=[]); '
+                'print(child["child_id"], flush=True); '
+                'call("collect_agent", child_id=child["child_id"], paths=[...]). '
+                'Do not repeat successful delegation just because a later call failed.'), tools=(
+                replace(declare('delegate_agent', 'Run a local child agent and wait for its result.',
+                        {'task': TEXT, 'inputs': PATHS}, ('task', 'inputs'), self.delegate), programmatic=True),
+                replace(declare('collect_agent', 'Copy selected child files without overwriting existing files.',
+                        {'child_id': TEXT, 'paths': PATHS}, ('child_id', 'paths'), self.collect), programmatic=True)))
 
     def delegate(self, args, invocation):
         terminal = shutil.which('gnome-terminal')
@@ -192,11 +203,14 @@ class ArishkaDelegation:
                '--workdir', str(work), '--session-dir', str(state), '--config', str(child_config), '--', args['task']]
         env = os.environ.copy()
         env.pop('PAVLUSHA_API_KEY', None)
-        result = subprocess.run(cmd, check=False, env=env)
+        try:
+            result = subprocess.run(cmd, check=False, env=env)
+        except BaseException as exc:
+            raise ProcessCleanupError('child termination unconfirmed') from exc
         try:
             exit_code = json.loads((child/'exit.json').read_text())['exit_code']
         except (OSError, ValueError, KeyError, TypeError):
-            raise AgentError('child termination was not confirmed') from None
+            raise ProcessCleanupError('child termination was not confirmed') from None
         if type(exit_code) is not int or result.returncode != 0 or exit_code != 0:
             raise AgentError(f'child failed with exit code {exit_code}')
         session = json.loads((state/'session.json').read_text())

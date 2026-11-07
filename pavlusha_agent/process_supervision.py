@@ -1,7 +1,10 @@
 """Bounded cleanup of controller-owned process sessions; no external process discovery."""
+from contextlib import contextmanager
 import os
 import signal
 import subprocess
+import sys
+import threading
 
 from .core import ProcessCleanupError
 
@@ -36,3 +39,46 @@ def stop_owned_process(process):
         except BaseException as cleanup:
             raise ProcessCleanupError('Owned process cleanup unconfirmed; Worker restore blocked') from cleanup
         raise exc
+
+
+@contextmanager
+def termination_signals():
+    """Turn terminal closure and termination into normal Python cleanup on the main thread."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    handled = (signal.SIGHUP, signal.SIGTERM)
+    previous = {sig: signal.getsignal(sig) for sig in handled}
+    def interrupt(signum, frame):
+        # A second hangup/termination must not interrupt resource cleanup.
+        for sig in handled:
+            signal.signal(sig, signal.SIG_IGN)
+        raise KeyboardInterrupt
+    try:
+        for sig in handled:
+            signal.signal(sig, interrupt)
+        yield
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+
+
+def report_interrupted():
+    """Report cancellation when possible, even if the terminal has disappeared."""
+    try:
+        print('Interrupted.', file=sys.stderr, flush=True)
+    except OSError:
+        pass
+    # A disconnected terminal can also make Python's final stream flush fail.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except OSError:
+            try:
+                fd = os.open(os.devnull, os.O_WRONLY)
+                try:
+                    os.dup2(fd, stream.fileno())
+                finally:
+                    os.close(fd)
+            except (OSError, ValueError):
+                pass

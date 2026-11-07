@@ -82,7 +82,7 @@ class ModuleLoaderTests(StateFixture, unittest.TestCase):
         path = Path(__file__).resolve().parents[1]/'examples/qwen.native.config.json'
         modules = load_modules(path, context={'workdir':str(self.work), 'review_every':3})
         self.assertEqual([m.name for m in modules], ['shell','project_state','project_map',
-            'images','processes','gui','browser','expert','office','gpu_shell',
+            'images','drawio','processes','gui','browser','expert','office','gpu_shell',
             'reasoning_code','loop_detection','interactive'])
         self.assertEqual(modules[1].review_every,3)
         self.assertIsNone(modules[1].data)

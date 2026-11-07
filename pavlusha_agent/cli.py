@@ -8,6 +8,7 @@ import sys
 
 from .adapters import ChatProvider
 from .basic_host import BasicHost
+from .process_supervision import report_interrupted
 from .core import AgentError
 from .llama_server import ManagedLlamaServer
 from .runtime import Runtime
@@ -72,7 +73,7 @@ def main():
             print(runtime.run())
         return 0
     except KeyboardInterrupt:
-        print('Interrupted.', file=sys.stderr)
+        report_interrupted()
         return 130
     except (AgentError, OSError, ValueError) as exc:
         print(f'ERROR: {exc}', file=sys.stderr)

@@ -398,6 +398,33 @@ class Runtime:
                         release.__enter__()
                         release_entered = True
                     context = InvocationContext(state['session_id'], turn_id, state['context_epoch'], asdict(reply))
+                    if tool.accepts_tool_calls:
+                        # The snapshot and outer pending action stay in force for the whole call.
+                        from dataclasses import replace
+                        def call_tool(nested):
+                            if type(nested) is not dict or type(nested.get('action')) is not str:
+                                raise AgentError('invalid programmatic tool request')
+                            target = view.tool_for(nested)
+                            if (not target.programmatic or target.accepts_tool_calls or target.execution.release_model
+                                    or view.tool_owners[target.name] == view.tool_owners[tool.name]):
+                                raise AgentError('tool does not allow programmatic calls')
+                            self.session.journal('programmatic_call_started', turn_id=turn_id, action=nested)
+                            try:
+                                nested_outcome = view.invoke(nested, replace(context, call_tool=None))
+                                if (not isinstance(nested_outcome, Outcome) or type(nested_outcome.result) is not dict
+                                        or nested_outcome.controls or nested_outcome.observations):
+                                    raise AgentError('programmatic tool returned unsupported outcome; effects may have occurred')
+                                raw_result = json.dumps(nested_outcome.result, allow_nan=False, ensure_ascii=False)
+                                if len(raw_result) > self.output_limit:
+                                    raise AgentError('programmatic result exceeds output limit; effects may have occurred')
+                                self.session.journal('programmatic_call_completed', turn_id=turn_id,
+                                                     action=nested, result=nested_outcome.result)
+                                return nested_outcome.result
+                            except BaseException as exc:
+                                self.session.journal('programmatic_call_failed', turn_id=turn_id,
+                                                     action=nested, error=type(exc).__name__)
+                                raise
+                        context = replace(context, call_tool=call_tool)
                     outcome = view.invoke(action, context)
                     if not isinstance(outcome, Outcome):
                         raise AgentError('function must return Outcome')
@@ -482,5 +509,9 @@ class Runtime:
                 messages.append({'role': 'user', 'content': 'WORKER REASONING (working hypotheses):\n' + reply.reasoning_content})
             messages.append({'role': 'assistant', 'content': reply.content})
         messages.append({'role': 'user', 'content': 'RESULT:\n' + json.dumps(result, ensure_ascii=False)})
+        if outcome:
+            for observation in outcome.observations:
+                if observation.lifetime == 'history':
+                    messages.append({'role': 'user', 'content': observation.parts()})
         self.session.complete(turn, messages, preserve_pending=preserve_pending)
         self.emit('turn_completed', turn=turn)

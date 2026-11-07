@@ -2,7 +2,9 @@
 """Launch the Pavlusha command-line runtime."""
 
 from pavlusha_agent.cli import main
+from pavlusha_agent.process_supervision import termination_signals
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    with termination_signals():
+        raise SystemExit(main())

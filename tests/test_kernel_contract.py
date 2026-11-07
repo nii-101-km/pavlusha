@@ -159,6 +159,18 @@ class KernelContractTests(unittest.TestCase):
         self.assertIn(PNG,str(provider.requests[1]))
         self.assertNotIn(PNG,str(provider.requests[2]))
 
+    def test_history_observations_accumulate_across_tool_calls(self):
+        counter = iter(('first', 'second'))
+        def inspect(args, context):
+            return Outcome({}, observations=(Observation(text=next(counter), image=PNG, lifetime='history'),))
+        provider = Provider([reply({'action':'work'}), reply({'action':'work'}), finish()])
+        runtime = self.runtime(provider, [module(tool(inspect))])
+        runtime.run()
+        self.assertNotIn('image_url', str(provider.requests[0]['messages']))
+        self.assertEqual(str(provider.requests[1]['messages']).count(PNG), 1)
+        self.assertEqual(str(provider.requests[2]['messages']).count(PNG), 2)
+        self.assertIn(PNG, str(self.state()['history']))
+
     def test_invalid_visual_payload_is_rejected(self):
         for image in ['file:///secret','https://example.org/a.png','data:image/png;base64,eA==']:
             with self.subTest(image=image):

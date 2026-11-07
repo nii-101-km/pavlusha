@@ -13,7 +13,7 @@ class OperationLoopTests(unittest.TestCase):
                 detector = OperationLoopDetector()
                 result = {'ok': False, 'error': error}
                 original = copy.deepcopy(result)
-                matches = [detector.feed('docx_inspect', {'path': 'missing.docx'},
+                matches = [detector.feed('odt_inspect', {'path': 'missing.odt'},
                                         result, step=step) for step in range(1, 4)]
                 self.assertIsNone(matches[0])
                 self.assertEqual(matches[2].cycle_length, 1)

@@ -1,4 +1,5 @@
 """Selected-browser diagnostics and explicitly granted evaluation."""
+from dataclasses import replace
 from pathlib import Path
 from pavlusha_agent.extensions import Contribution, Outcome
 from .bundled._browser import (load_browser_adapter,evaluation_available,validate_browser_diagnostics,
@@ -14,9 +15,9 @@ class Browser:
             if self.config is None:
                 return Contribution(prefix={'instructions':'Browser tools unavailable: configure the browser module with a selected adapter.'})
             self.session=load_browser_adapter(self.config)
-            tools=[declare('browser_diagnostics','Read or clear the selected page diagnostics.',
+            tools=[replace(declare('browser_diagnostics','Read or clear the selected page diagnostics.',
                 {'operation':{'enum':['read','clear']},'since':INTEGER,'limit':INTEGER,
-                 'kinds':{'type':'array','items':TEXT}},(),self.diagnostics)]
+                 'kinds':{'type':'array','items':TEXT}},(),self.diagnostics), programmatic=True)]
             can_evaluate = evaluation_available(self.session)
             if can_evaluate:
                 tools.append(declare('browser_evaluate','Run JavaScript on the selected page; side effects may occur.',

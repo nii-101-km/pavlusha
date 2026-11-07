@@ -203,11 +203,12 @@ class ProjectStateModuleTests(StateFixture, unittest.TestCase):
         root=Path(__file__).resolve().parents[1]
         before=json.loads((root/'tests/fixtures/state-integration-core-before.json').read_text())
         for name,expected in before.items():
-            # Authorized interface, model lifecycle and release-version changes are tested separately.
+            # Interface, lifecycle, termination handling and release changes are tested separately.
             if name in ('pavlusha_agent/runtime.py','pavlusha_agent/extensions.py',
                         'pavlusha_agent/basic_host.py','pavlusha_agent/llama_server.py',
                         'pavlusha_agent/session.py', 'pavlusha_agent/__init__.py', 'pavlusha_agent/config.py',
-                        'pavlusha_agent/cli.py','pavlusha_agent/adapters/__init__.py'):
+                        'pavlusha_agent/cli.py','pavlusha_agent/adapters/__init__.py',
+                        'agent.py','pavlusha_agent/process_supervision.py'):
                 continue
             self.assertEqual(hashlib.sha256((root/name).read_bytes()).hexdigest(),expected,name)
 

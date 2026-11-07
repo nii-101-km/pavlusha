@@ -13,7 +13,7 @@ class Shell:
         contribution = self.host.on_event(event)
         if contribution is None:
             return None
-        return replace(contribution, tools=tuple(tool for tool in contribution.tools if tool.name == 'shell'),
+        return replace(contribution, tools=tuple(replace(tool, programmatic=True) for tool in contribution.tools if tool.name == 'shell'),
                        system_instructions='For Python commands, use python3 by default; python may be unavailable.')
 
 

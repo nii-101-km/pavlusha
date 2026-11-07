@@ -38,7 +38,7 @@ class Observation:
     """Owned model observation; next_request is consumed only when actually visible."""
     text: str = ''
     image: str = ''  # embedded data:image/png|jpeg;base64; never a host path or URL
-    lifetime: Literal['next_request', 'until_replaced'] = 'next_request'
+    lifetime: Literal['next_request', 'until_replaced', 'history'] = 'next_request'
 
     def parts(self):
         parts = []
@@ -55,6 +55,7 @@ class InvocationContext:
     turn_id: int
     context_epoch: int
     response: dict
+    call_tool: Callable[[dict], dict] | None = None
 
 
 @dataclass(frozen=True)
@@ -77,6 +78,8 @@ class Tool:
     arguments: dict
     invoke: Callable[[dict, InvocationContext], Outcome]
     execution: ExecutionPolicy = field(default_factory=ExecutionPolicy)
+    programmatic: bool = False
+    accepts_tool_calls: bool = False
 
 
 @dataclass(frozen=True)
@@ -125,7 +128,7 @@ def validate_observations(observations):
     for item in observations:
         if (not isinstance(item, Observation) or type(item.text) is not str
                 or type(item.image) is not str or not (item.text or item.image)
-                or item.lifetime not in ('next_request', 'until_replaced') or len(item.text) > 24000):
+                or item.lifetime not in ('next_request', 'until_replaced', 'history') or len(item.text) > 24000):
             raise AgentError('invalid observation')
         if item.image:
             header, sep, encoded = item.image.partition(',')
@@ -224,8 +227,11 @@ class EventHost:
                     or (tool.execution.restore_guard is not None and not callable(tool.execution.restore_guard))
                     or (tool.execution.restore_guard is not None and not tool.execution.release_model)):
                 raise AgentError('invalid execution policy')
+            if type(tool.programmatic) is not bool or type(tool.accepts_tool_calls) is not bool:
+                raise AgentError('invalid programmatic tool policy')
             Draft202012Validator.check_schema(tool.arguments)
-            tools.append(Tool(tool.name, tool.description, copy.deepcopy(tool.arguments), tool.invoke, tool.execution))
+            tools.append(Tool(tool.name, tool.description, copy.deepcopy(tool.arguments), tool.invoke, tool.execution,
+                              tool.programmatic, tool.accepts_tool_calls))
         return Contribution(copy.deepcopy(value.prefix), value.message, tuple(tools),
                             value.exclusive, value.reset_ready, copy.deepcopy(value.observations), value.system_instructions)
 
@@ -342,7 +348,8 @@ class EventHost:
         validate_observations(outcome.observations)
         self.controls.extend(outcome.controls)
         name = view.tool_owners[tool_name]
-        self.pending_observations[name] = copy.deepcopy(outcome.observations)
+        self.pending_observations[name] = copy.deepcopy(tuple(
+            observation for observation in outcome.observations if observation.lifetime != 'history'))
 
     def stop(self, event):
         errors, failed = [], []

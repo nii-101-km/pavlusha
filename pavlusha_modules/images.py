@@ -1,4 +1,4 @@
-"""Image inspection as an event module, without private global slots."""
+"""Image inspection with visual observations retained in conversation history."""
 import base64
 import io
 from pavlusha_agent.extensions import Contribution, Outcome, Observation
@@ -11,7 +11,7 @@ class Images:
     def __init__(self, root): self.root = root
     def on_event(self, event):
         if event.kind == 'session_started':
-            return Contribution(message='Use view_image to inspect a file; visual observations are transient.',
+            return Contribution(message='Use view_image to inspect a file; viewed images stay in the current context history until reset.',
                 tools=(declare('view_image', 'Inspect a PNG, JPEG or WebP in /work.',
                                {'path': TEXT}, ('path',), self.view),))
     def view(self, args, context):
@@ -25,7 +25,8 @@ class Images:
             output = io.BytesIO()
             with Image.open(io.BytesIO(raw)) as image: image.save(output, format='PNG')
             url = 'data:image/png;base64,' + base64.b64encode(output.getvalue()).decode('ascii')
-        return Outcome(metadata, observations=(Observation(text='Image: ' + metadata['path'], image=url),))
+        return Outcome(metadata, observations=(Observation(text='Image: ' + metadata['path'], image=url,
+                                                          lifetime='history'),))
 
 
 def create_extension(*, settings, context):
