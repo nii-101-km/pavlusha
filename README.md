@@ -67,6 +67,20 @@ does not itself enforce a private mode on a supplied directory or every session 
 Do not publish session logs or place secrets in tool arguments.
 
 Examples cover Liquid, Qwen, Ornith and Perplexity with a local child agent.
+The example model configurations and their adapters and modules are:
+
+| Model / setup | Adapter | Example configuration | Modules |
+| --- | --- | --- | --- |
+| Qwen3.8-27B | `llama-cpp` | [qwen.native.config.json](examples/qwen.native.config.json) | Shell, Project State, Project Map, Images, draw.io, Processes, GUI, Browser, Expert, Office, GPU Shell, Reasoning Code, Loop Detection, Interactive |
+| Ornith-1.5-35B-A3B | `llama-cpp` | [ornith.config.json](examples/ornith.config.json) | Shell, Project State, Loop Detection |
+| LFM3-1.7B (Liquid) | `llama-cpp` | [liquid.cpu.config.json](examples/liquid.cpu.config.json) | Shell, Finish, Loop Detection, Token Window |
+| Perplexity parent with local child | `perplexity-agent` | [arishka-pavlusha.config.json](examples/arishka-pavlusha.config.json) | Shell, Finish, Orchestration, Interactive |
+
+These examples reflect configurations used for local experiments; they do not
+establish compatibility with other models or validate every module in every run.
+Browser and Expert require separate configuration. The Perplexity setup requires
+an API key and a running local server for the child.
+
 Modules are trusted Python code and are not sandboxed. `agent.py` runs a minimal
 composition with its own CLI. Both entry points support `--help`.
 For a managed llama-server, set `llama_server` in the assembly configuration
