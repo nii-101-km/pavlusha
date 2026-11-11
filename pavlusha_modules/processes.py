@@ -32,6 +32,8 @@ class Processes:
                 'across turns within this session, not across restarts. Use foreground commands; '
                 'a returned ID does not prove readiness: check status and logs. If an owned '
                 'server must be restarted, stop its process ID and start a fresh process. '
+                'An isolated process has a separate network from an isolated GUI; '
+                'to inspect a local server without host network, start server and browser together in gui_start. '
                 'Process network permission: '+str(self.allow_network)+'. '
                 + ('process_start may opt into host network with network=true when needed.'
                    if self.allow_network else 'Use network=false; host network is not granted.'))

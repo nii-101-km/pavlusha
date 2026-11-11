@@ -19,7 +19,7 @@ class LiveConsoleTests(unittest.TestCase):
             if plain:
                 renderer._console=None
             renderer.start(model='example',task='example',max_steps=1)
-            self.assertEqual(__version__, '0.9.0')
+            self.assertEqual(__version__, '0.9.1')
             self.assertIn(__version__,stream.getvalue())
 
     def test_streamed_reasoning_shell_and_result_are_readable(self):

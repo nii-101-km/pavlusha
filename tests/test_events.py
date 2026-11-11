@@ -148,7 +148,8 @@ class RuntimeEventTests(unittest.TestCase):
         runtime.run()
         first=runtime.provider.requests[0]
         self.assertIn('HIDDEN MAP',str(first));self.assertIn('HIDDEN INSTRUCTION',str(first))
-        self.assertNotIn('"const": "shell"',json.dumps(first['response_format']))
+        self.assertIn('"const": "shell"',json.dumps(first['response_format']))
+        self.assertIn('RESTRICTED MODE', str(first['messages']))
         self.assertEqual([x[0] for x in self.calls],['allowed'])
         self.assertEqual(review_done,[True])
         self.assertIn('HIDDEN MAP',str(runtime.provider.requests[2]))

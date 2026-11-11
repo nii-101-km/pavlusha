@@ -58,7 +58,8 @@ class ProjectStateModuleTests(StateFixture, unittest.TestCase):
         runtime=self.runtime([shell(),initialize(),shell(),done(),finish()])
         self.assertEqual(runtime.run(),'done')
         self.assertEqual(self.effects,['shell'])
-        self.assertNotIn('shell',str(runtime.provider.requests[0]['response_format']))
+        self.assertEqual(runtime.provider.requests[0]['response_format'], runtime.provider.requests[2]['response_format'])
+        self.assertEqual(runtime.provider.requests[0]['messages'][0], runtime.provider.requests[2]['messages'][0])
         self.assertIn('shell',str(runtime.provider.requests[2]['response_format']))
         self.assertEqual(self.module.data['operation_count'],1)
     def test_normal_work_updates_are_persisted_without_refreshing_frozen_prefix(self):
@@ -79,9 +80,13 @@ class ProjectStateModuleTests(StateFixture, unittest.TestCase):
         runtime=self.runtime([initialize(),shell(),shell(),done(),review(),finish()],module=module)
         runtime.run()
         self.assertEqual(self.effects,['shell'])
+        # Initialization, ordinary work, review, and return use the same model prefix.
+        for request in runtime.provider.requests[1:]:
+            self.assertEqual(request['messages'][0], runtime.provider.requests[0]['messages'][0])
+            self.assertEqual(request['response_format'], runtime.provider.requests[0]['response_format'])
         for i in (2,3,4):
             schema=str(runtime.provider.requests[i]['response_format'])
-            self.assertNotIn("'const': 'shell'",schema)
+            self.assertIn("'const': 'shell'",schema)
             self.assertIn('project_review_complete',schema)
         self.assertIn('shell',str(runtime.provider.requests[5]['response_format']))
         self.assertEqual(module.data['project']['last_review_operation'],1)
@@ -97,8 +102,8 @@ class ProjectStateModuleTests(StateFixture, unittest.TestCase):
                                module=ProjectState(review_every=1, combined_review=True))
         self.assertEqual(runtime.run(), 'done')
         schema = runtime.provider.requests[2]['response_format']['json_schema']['schema']
-        self.assertEqual(schema['properties']['action']['const'], 'project_review_complete')
-        self.assertIn('changes', schema['properties'])
+        review_schema = next(branch for branch in schema['anyOf'] if branch['properties']['action']['const'] == 'project_review_complete')
+        self.assertIn('changes', review_schema['properties'])
         self.assertIn("'const': 'shell'", str(runtime.provider.requests[3]['response_format']))
         self.assertEqual(self.effects, ['shell', 'shell'])
         self.assertEqual(self.module.data['project']['work'][1]['evidence'], ['SHELL: tests passed'])
@@ -110,7 +115,7 @@ class ProjectStateModuleTests(StateFixture, unittest.TestCase):
                                module=ProjectState(review_every=1, combined_review=True))
         self.assertEqual(runtime.run(), 'done')
         self.assertIn('project_state_rejected', str(runtime.provider.requests[3]['messages']))
-        self.assertNotIn("'const': 'shell'", str(runtime.provider.requests[3]['response_format']))
+        self.assertIn('RESTRICTED MODE', str(runtime.provider.requests[3]['messages']))
         self.assertEqual(self.effects, ['shell'])
 
     def test_history_reset_requires_handoff_then_supplies_it_in_new_prefix(self):
@@ -160,7 +165,7 @@ class ProjectStateModuleTests(StateFixture, unittest.TestCase):
                              module=ProjectState(review_every=1))
         runtime.run()
         self.assertIn('project_state_rejected',str(runtime.provider.requests[3]['messages']))
-        self.assertNotIn("'const': 'shell'",str(runtime.provider.requests[3]['response_format']))
+        self.assertIn('RESTRICTED MODE',str(runtime.provider.requests[3]['messages']))
     def test_corrupt_module_storage_uses_valid_generation(self):
         runtime=self.runtime([initialize()]);runtime.max_steps=1
         with self.assertRaises(AgentError):runtime.run()

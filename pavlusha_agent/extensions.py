@@ -92,6 +92,7 @@ class Contribution:
     reset_ready: bool = True
     observations: tuple[Observation, ...] = ()
     system_instructions: str = ''
+    allowed_tools: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -157,6 +158,7 @@ class TurnView:
     exclusive_owner: str | None
     tool_owners: dict[str, str] = field(default_factory=dict)
     system_instructions: tuple[str, ...] = ()
+    advertised_tools: tuple[Tool, ...] | None = None
 
     @staticmethod
     def schema_for(tool):
@@ -166,7 +168,9 @@ class TurnView:
             'required': ['action', *args.get('required', [])], 'additionalProperties': False}
 
     def response_format(self):
-        branches = [self.schema_for(tool) for tool in self.tools]
+        if not self.tools:
+            raise AgentError('no callable functions in this turn; module constraints cannot make progress')
+        branches = [self.schema_for(tool) for tool in (self.advertised_tools if self.advertised_tools is not None else self.tools)]
         if not branches:
             raise AgentError('no callable functions in this turn; module constraints cannot make progress')
         schema = branches[0] if len(branches) == 1 else {'anyOf': branches}
@@ -214,6 +218,10 @@ class EventHost:
                 or type(value.exclusive) is not bool or type(value.reset_ready) is not bool
                 or type(value.system_instructions) is not str or type(value.tools) is not tuple):
             raise AgentError('invalid module contribution')
+        if value.allowed_tools is not None and (type(value.allowed_tools) is not tuple or
+                any(type(name) is not str for name in value.allowed_tools) or
+                not set(value.allowed_tools).issubset({tool.name for tool in value.tools})):
+            raise AgentError('invalid allowed tools')
         validate_observations(value.observations)
         tools = []
         for tool in value.tools:
@@ -233,7 +241,8 @@ class EventHost:
             tools.append(Tool(tool.name, tool.description, copy.deepcopy(tool.arguments), tool.invoke, tool.execution,
                               tool.programmatic, tool.accepts_tool_calls))
         return Contribution(copy.deepcopy(value.prefix), value.message, tuple(tools),
-                            value.exclusive, value.reset_ready, copy.deepcopy(value.observations), value.system_instructions)
+                            value.exclusive, value.reset_ready, copy.deepcopy(value.observations), value.system_instructions,
+                            value.allowed_tools)
 
     def emit(self, event):
         if event.kind == 'session_started':
@@ -276,11 +285,11 @@ class EventHost:
         if len(owners) > 1:
             raise AgentError('exclusive mode conflict: ' + ', '.join(owners))
         owner = owners[0] if owners else None
-        prefix, messages, tools, observations, system = [], [], [], [], []
+        prefix, messages, tools, advertised, observations, system = [], [], [], [], [], []
         for name, contribution in self.contributions.items():
             for key, text in contribution.prefix.items():
                 if key == 'instructions':
-                    if (owner is None or owner == name) and text.strip():
+                    if text.strip():
                         system.append(f'MODULE {name}:\n{text.strip()}')
                 else:
                     prefix.append({'role': 'user', 'content': f'EXTENSION {name}/{key}:\n{text}'})
@@ -291,14 +300,18 @@ class EventHost:
             for observation in active_observations:
                 messages.append({'role': 'user', 'content': [
                     {'type': 'text', 'text': f'EXTENSION {name}/observation:'}, *observation.parts()]})
-            if owner is None or owner == name:
-                if contribution.system_instructions.strip():
-                    system.append(f'MODULE {name}:\n{contribution.system_instructions.strip()}')
-                for tool in contribution.tools:
-                    system.append(f'ACTION {tool.name}: {tool.description.strip()}')
-                tools.extend(contribution.tools)
+            if contribution.system_instructions.strip():
+                system.append(f'MODULE {name}:\n{contribution.system_instructions.strip()}')
+            for tool in contribution.tools:
+                system.append(f'ACTION {tool.name}: {tool.description.strip()}')
+                advertised.append(tool)
+                if (owner is None or owner == name) and (contribution.allowed_tools is None or tool.name in contribution.allowed_tools):
+                    tools.append(tool)
         validate_observations(tuple(observations))
-        return TurnView(tuple(prefix), tuple(messages), tuple(tools), owner, all_names, tuple(system))
+        if owner is not None:
+            messages.append({'role': 'user', 'content': 'RESTRICTED MODE: Only these actions are currently available: ' +
+                             ', '.join(tool.name for tool in tools) + '. Other actions will be rejected.'})
+        return TurnView(tuple(prefix), tuple(messages), tuple(tools), owner, all_names, tuple(system), tuple(advertised))
 
     def model_history(self, history):
         """Remove selected complete turns only from the model's view."""

@@ -203,10 +203,10 @@ class ProjectState:
             'project_update': 'Keep durable State current: record decisions, work status and evidence; exactly one item must be ACTIVE while work remains. BLOCKED requires a reason; SUPERSEDED requires a deviation.',
             'project_review_complete': 'For a required review, update durable State and provide a short nonempty handoff with the immediate next action and unfinished verification.',
             'finish': 'Finish only when all work is DONE or SUPERSEDED, backed by evidence.'}
-        system_instructions = '\n'.join(rules[name] for name in names)
+        system_instructions = '\n'.join(rules.values())
         contribution = Contribution(prefix=prefix, system_instructions=system_instructions,
             message=message,
-            tools=tuple(self.tools[name] for name in names), exclusive=exclusive, reset_ready=ready)
+            tools=tuple(self.tools.values()), allowed_tools=names, exclusive=exclusive, reset_ready=ready)
         return EventReply(contribution, (Control('reset', 'Project State checkpoint ready'),) if self.want_reset else ())
 
     def on_event(self, event):

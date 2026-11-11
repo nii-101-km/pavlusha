@@ -39,7 +39,7 @@ LibreOffice, Poppler и шрифты. Эти внешние зависимост
 и при необходимости `api_key_env`, `allow_network`, `max_calls`, `timeout`.
 Адреса и ключи не подставляются автоматически. Сеть процессов и GUI — независимые
 `settings.allow_network`, по умолчанию false; сеть экспертного API — тоже отдельно.
-Обычный shell и shell_released используют CLI `--network`.
+Обычный shell и shell_released используют CLI `--network`. Пошаговая инструкция по GUI-браузеру и локальным приложениям: [настройка браузера](browser-setup.md).
 
 Office использует локальный LibreOffice и Python UNO для чтения и изменения
 документов. Рендер — отдельная файловая операция; успешный рендер не заменяет

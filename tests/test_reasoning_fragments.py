@@ -104,7 +104,8 @@ class ReasoningFragmentTests(unittest.TestCase):
         self.assertEqual(self.effects, [1])
         first, second = runtime.provider.requests[:2]
         self.assertIn('shell', str(first['response_format']))
-        self.assertNotIn('shell', str(second['response_format']))
+        self.assertIn('shell', str(second['response_format']))
+        self.assertIn('RESTRICTED MODE', str(second['messages']))
         self.assertIn('review', str(second['response_format']))
 
     def test_actual_adapter_sse_emits_only_reasoning_fragments_once(self):

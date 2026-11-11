@@ -26,8 +26,20 @@ class Gui:
             tools=tuple(declare(name,'Private GUI action '+name,props,
                 ('x','y') if name in ('click','double_click','right_click') else required,
                 lambda args,ctx,kind=name:self.call(kind,args)) for name,props,required in specs)
-            return Contribution(message='Use the private GUI tools; screenshots are transient observations. '
-                'GUI network permission: '+str(self.allow_network),tools=tools)
+            instructions = (
+                'PRIVATE GUI: The GUI uses its own 800x600 display in the /work sandbox; '
+                'screenshots are transient observations. Use gui_start to start an application, '
+                'view_gui to observe, and gui_close when finished. For a web UI use '
+                'pavlusha-browser URL in gui_start. With network=false, the GUI has its own '
+                'loopback: a server started by shell or process_start is not reachable there. '
+                'Start the server and browser in the same gui_start command, for example '
+                '"python3 -u server.py --host 127.0.0.1 --port 8000 > /tmp/server.log 2>&1 & '
+                'exec pavlusha-browser http://127.0.0.1:8000/"; adapt the server command '
+                'to the application. Keep the browser in the foreground. '
+                'network=true uses the host network and requires the GUI network permission; '
+                'it is not limited to localhost. GUI network permission: ' + str(self.allow_network) + '. '
+                'If browser startup fails, report the error; do not guess a replacement browser.')
+            return Contribution(prefix={'instructions': instructions}, tools=tools)
         if event.kind == 'session_stopped':
             if self.runtime is not None:
                 self.runtime.close()

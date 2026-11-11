@@ -370,6 +370,8 @@ class Runtime:
                 # Validate first. A rejected action must never become pending/executable.
                 from jsonschema import Draft202012Validator
                 Draft202012Validator(response_format['json_schema']['schema']).validate(action)
+                # The model sees a stable catalogue; execution still obeys this turn's restrictions.
+                view.tool_for(action)
             except Exception as exc:
                 status = 'rejected'
                 result = {'error': 'invalid_action', 'detail': str(exc)[:1000]}

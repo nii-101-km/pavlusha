@@ -58,6 +58,7 @@ class LoadedCapabilitiesTests(unittest.TestCase):
             for name in ('process_start','process_status','process_logs','process_stop'):
                 self.assertIn('"action":"'+name+'"',instructions)
             self.assertIn('network=true' if granted else 'host network is not granted',instructions)
+            self.assertIn('server and browser together in gui_start', instructions)
             self.assertEqual({t.name for t in contribution.tools},
                              {'process_start','process_status','process_logs','process_stop'})
         class Adapter:
@@ -74,6 +75,15 @@ class LoadedCapabilitiesTests(unittest.TestCase):
             self.assertEqual('browser_evaluate' in names,enabled)
             self.assertEqual('"action":"browser_evaluate"' in instructions,enabled)
             browser.on_event(Event('session_stopped','s',0,0))
+
+    def test_gui_instructions_explain_isolated_local_browser(self):
+        from pavlusha_modules.gui import Gui
+        gui = Gui(self.work, allow_network=False)
+        self.addCleanup(lambda: gui.on_event(Event('session_stopped','s',0,0)))
+        instructions = gui.on_event(Event('session_started','s',0,0)).prefix['instructions']
+        self.assertIn('server and browser in the same gui_start', instructions)
+        self.assertIn('pavlusha-browser', instructions)
+        self.assertIn('not limited to localhost', instructions)
     def test_loaded_default_images_review_reset_and_cleanup(self):
         from PIL import Image
         Image.new('RGB',(4,4),'red').save(self.work/'image.png')
@@ -84,7 +94,8 @@ class LoadedCapabilitiesTests(unittest.TestCase):
         self.assertEqual(runtime.session.state['context_epoch'],1)
         self.assertNotIn('image_url',str(provider.requests[0]['messages']))
         # Review restricts tools but leaves the map and observation visible.
-        self.assertNotIn('view_image',str(provider.requests[2]['response_format']))
+        self.assertIn('view_image',str(provider.requests[2]['response_format']))
+        self.assertIn('RESTRICTED MODE',str(provider.requests[2]['messages']))
         self.assertIn('image_url',str(provider.requests[2]['messages']))
         self.assertNotIn('image_url',str(provider.requests[3]['messages']))
         self.assertIn('project_map/navigation',str(provider.requests[3]['messages']))

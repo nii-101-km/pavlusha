@@ -5,9 +5,9 @@
 </p>
 
 Pavlusha is a project agent powered by a local or remote model API. This checkout
-prepares version 0.9.0 and uses an event-driven kernel and trusted, pluggable
-Python modules. See the [draft 0.9.0 notes](docs/release-0.9.0.md) and the
-limitations below. The release is not yet published.
+is version 0.9.1 and uses an event-driven kernel and trusted, pluggable
+Python modules. See the [0.9.1 notes](docs/release-0.9.1.md) and the
+limitations below.
 
 ## Requirements and installation
 
@@ -37,6 +37,21 @@ Check the version in the environment with `python agent.py --version` or
 run the commands from the project checkout.
 
 ## Running Pavlusha
+
+Use `./run-pavlusha.sh` to run the project with its prepared Python environment.
+It uses an active virtual environment or the project’s `.venv`; set
+`PAVLUSHA_VENV` to use a different one. The script checks Python dependencies
+and passes its arguments to `project_state_agent.py`. It does not install packages
+or configure the model server. For example:
+
+```sh
+./run-pavlusha.sh --config examples/liquid.cpu.config.json \
+  --workdir /absolute/work --session-dir /absolute/session -- 'Describe the task'
+```
+
+Before running, configure the paths and settings for your model and server.
+For visual browser setup and local web apps, see the
+[browser guide](docs/browser-setup.md). Run `./check-browser.sh` to check the browser dependencies and open a local test page in the private GUI.
 
 Prepare separate, non-nested directories for the work files and the technical session.
 Choose an assembly configuration with model, server and module settings:
