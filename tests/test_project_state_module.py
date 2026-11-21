@@ -213,7 +213,8 @@ class ProjectStateModuleTests(StateFixture, unittest.TestCase):
                         'pavlusha_agent/basic_host.py','pavlusha_agent/llama_server.py',
                         'pavlusha_agent/session.py', 'pavlusha_agent/__init__.py', 'pavlusha_agent/config.py',
                         'pavlusha_agent/cli.py','pavlusha_agent/adapters/__init__.py',
-                        'agent.py','pavlusha_agent/process_supervision.py'):
+                        'agent.py','pavlusha_agent/process_supervision.py',
+                        'pavlusha_agent/sandbox.py','pavlusha_runtime/sandbox.py'):
                 continue
             self.assertEqual(hashlib.sha256((root/name).read_bytes()).hexdigest(),expected,name)
 

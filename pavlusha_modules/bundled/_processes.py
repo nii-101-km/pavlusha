@@ -14,7 +14,7 @@ from pavlusha_runtime.sandbox import build_bwrap_command
 
 def validate_process_action(action):
     kind = action['action']
-    fields = {'process_start': {'command', 'network', 'lifetime_seconds'},
+    fields = {'process_start': {'command', 'network', 'kvm', 'lifetime_seconds'},
               'process_status': {'process_id'}, 'process_logs': {'process_id', 'limit'},
               'process_stop': {'process_id'}}[kind]
     if set(action) - fields - {'action'}:
@@ -27,6 +27,9 @@ def validate_process_action(action):
         data.setdefault('network', False)
         if type(data['network']) is not bool:
             raise AgentError('network must be boolean')
+        data.setdefault('kvm', False)
+        if type(data['kvm']) is not bool:
+            raise AgentError('kvm must be boolean')
         data.setdefault('lifetime_seconds', 3600)
         if type(data['lifetime_seconds']) is not int or not 1 <= data['lifetime_seconds'] <= 86400:
             raise AgentError('lifetime_seconds must be 1..86400')
@@ -39,9 +42,10 @@ def validate_process_action(action):
 
 class ProcessManager:
     """No arbitrary PID controls or adoption of commands from previous sessions."""
-    def __init__(self, workdir, *, allow_network=False):
+    def __init__(self, workdir, *, allow_network=False, allow_kvm=False):
         self.workdir = workdir
         self.allow_network = allow_network
+        self.allow_kvm = allow_kvm
         self.entries = {}
         self.closed = False
         self.cleanup_error = None
@@ -103,11 +107,14 @@ class ProcessManager:
                 if data['network'] and not self.allow_network:
                     return {'error': 'process_network_not_granted',
                             'hint': 'Shared host network requires allow_network:true in the startup toolkit manifest.'}
+                if data['kvm'] and not self.allow_kvm:
+                    return {'error': 'process_kvm_not_granted',
+                            'hint': 'KVM requires allow_kvm:true in the processes module settings.'}
                 if sum(e['process'].poll() is None for e in self.entries.values()) >= 4:
                     return {'error': 'process_limit', 'limit': 4}
                 if len(self.entries) >= 64:
                     return {'error': 'process_session_limit', 'limit': 64}
-                command = build_bwrap_command(self.workdir, data['command'], network=data['network'])
+                command = build_bwrap_command(self.workdir, data['command'], network=data['network'], kvm=data['kvm'])
                 try:
                     process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                                stderr=subprocess.STDOUT, start_new_session=True)

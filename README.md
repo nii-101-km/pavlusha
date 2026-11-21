@@ -81,6 +81,8 @@ establish compatibility with other models or validate every module in every run.
 Browser and Expert require separate configuration. The Perplexity setup requires
 an API key and a running local server for the child.
 
+The optional [Android emulator module](docs/android9.md) provides session-owned Android 9 testing.
+
 Modules are trusted Python code and are not sandboxed. `agent.py` runs a minimal
 composition with its own CLI. Both entry points support `--help`.
 For a managed llama-server, set `llama_server` in the assembly configuration

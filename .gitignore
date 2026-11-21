@@ -39,6 +39,21 @@ experiment.jsonl
 history_archive.jsonl
 context_archive.jsonl
 
+# Local Android environments, build products and signing material
+.android-env/
+.android/
+.gradle/
+/sdk/
+/ndk/
+android-ndk-*/
+local.properties
+*.avd/
+*.apk
+*.aab
+*.jks
+*.keystore
+*.p12
+
 # Temporary verification, editor and OS debris
 /.release-checks/
 *.tmp

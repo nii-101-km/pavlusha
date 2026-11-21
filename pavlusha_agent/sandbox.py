@@ -22,9 +22,10 @@ def run_shell(
     network: bool,
     timeout: int,
     gpu: bool = False,
+    kvm: bool = False,
 ) -> ShellResult:
     """Run a bounded sandbox command and return its output before admission checks."""
-    argv = build_bwrap_command(workdir, command, network=network, gpu=gpu)
+    argv = build_bwrap_command(workdir, command, network=network, gpu=gpu, kvm=kvm)
     started = time.monotonic()
     process = subprocess.Popen(
         argv,

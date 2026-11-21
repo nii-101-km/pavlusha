@@ -27,6 +27,7 @@ def build_bwrap_command(
     *,
     network: bool,
     gpu: bool = False,
+    kvm: bool = False,
 ) -> list[str]:
     args = [
         "bwrap",
@@ -62,6 +63,11 @@ def build_bwrap_command(
     if gpu:
         for path in _nvidia_compute_devices():
             args += ["--dev-bind", str(path), str(path)]
+    if kvm:
+        device = Path('/dev/kvm')
+        if device.is_symlink() or not device.is_char_device() or not os.access(device, os.R_OK | os.W_OK):
+            raise OSError('KVM access requires a readable and writable host character device: /dev/kvm')
+        args += ['--dev-bind', '/dev/kvm', '/dev/kvm']
     args += [
         "--tmpfs", "/tmp",
         "--bind", str(workdir), "/work",
