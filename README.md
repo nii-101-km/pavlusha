@@ -5,8 +5,8 @@
 </p>
 
 Pavlusha is a project agent powered by a local or remote model API. This checkout
-is version 0.9.1 and uses an event-driven kernel and trusted, pluggable
-Python modules. See the [0.9.1 notes](docs/release-0.9.1.md) and the
+is version 0.10.0 and uses an event-driven kernel and trusted, pluggable
+Python modules. See the [0.10.0 notes](docs/release-0.10.0.md) and the
 limitations below.
 
 ## Requirements and installation
